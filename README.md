@@ -17,8 +17,8 @@ Dockyard spins up fully independent Docker instances that:
 ## Quick Start
 
 ```bash
-# Install the default instance
-sudo ./install.sh
+# Install with baked-in defaults
+sudo ./dockyard.sh install
 
 # Run a container (uses sysbox-runc automatically)
 DOCKER_HOST=unix:///dockyard/docker.sock docker run --rm -it alpine ash
@@ -48,10 +48,10 @@ DOCKYARD_POOL_BASE=172.33.0.0/16
 DOCKYARD_POOL_SIZE=24
 ```
 
-To add another instance, create `env.myname` with unique values for all six variables, then:
+To add another instance, create an env file with unique values for all six variables, then:
 
 ```bash
-sudo ./install.sh myname
+DOCKYARD_ENV=./env.myname sudo -E ./dockyard.sh install
 ```
 
 Each instance runs independently with its own systemd service (`dy_docker`, `tc_docker`, etc.), its own bridge, and its own iptables rules scoped to its bridge interface.
@@ -59,14 +59,14 @@ Each instance runs independently with its own systemd service (`dy_docker`, `tc_
 ## Commands
 
 ```bash
-sudo ./install.sh [env] [--no-systemd] [--no-start]   # Install instance
-sudo ./uninstall.sh [env]                               # Remove instance completely
-./status.sh [env]                                       # Show diagnostics
-sudo ./start.sh [env]                                   # Start manually (no systemd)
-sudo ./stop.sh [env]                                    # Stop manually (no systemd)
+sudo ./dockyard.sh install [--no-systemd] [--no-start]   # Install instance
+sudo ./dockyard.sh uninstall                               # Remove instance completely
+./dockyard.sh status                                       # Show diagnostics
+sudo ./dockyard.sh start                                   # Start manually (no systemd)
+sudo ./dockyard.sh stop                                    # Stop manually (no systemd)
 ```
 
-All commands default to the `default` environment if no argument is given.
+All commands auto-load `$DOCKYARD_ROOT/env.dockyard` (written by install). Use `DOCKYARD_ENV` to point at a custom env file.
 
 ## What Gets Installed
 
@@ -135,30 +135,13 @@ export DOCKER_HOST=unix:///dockyard/docker.sock
 ## Uninstall
 
 ```bash
-sudo ./uninstall.sh          # Removes default instance
-sudo ./uninstall.sh thies    # Removes named instance
+sudo ./dockyard.sh uninstall
+
+# For a non-default instance
+DOCKYARD_ENV=/docker2/env.dockyard sudo -E ./dockyard.sh uninstall
 ```
 
 This stops the daemon, disables the systemd service, and removes all data including images and containers.
-
-## Troubleshooting
-
-### System Docker Loses Networking After Dockyard Restart
-
-**Symptom:** After restarting a Dockyard Docker instance, containers on the **system Docker** lose network connectivity.
-
-**Cause:** Docker's built-in iptables management (`--iptables=true`, the default) uses global chain names (`DOCKER-FORWARD`, `DOCKER-USER`, etc.). When a Dockyard dockerd starts or restarts, it clobbers the iptables rules that the system Docker depends on, breaking its networking.
-
-**Fix** — three changes in the generated systemd service (`install.sh`):
-
-1. **`--iptables=false`** passed to the Dockyard dockerd, preventing it from touching the global Docker iptables chains.
-
-2. **Explicit bridge-scoped iptables rules** in the systemd unit lifecycle:
-   - `ExecStartPre` inserts 3 FORWARD rules + 1 NAT MASQUERADE rule, all scoped to the instance's bridge via `-i $BRIDGE` / `-o $BRIDGE`
-   - `ExecStopPost` removes those same rules
-   - Bridge-scoped rules can never interfere with the system Docker or other Dockyard instances.
-
-3. **`Before=docker.service`** ordering ensures Dockyard starts before the system Docker, so Docker can set up its own global rules cleanly afterward.
 
 ## Related Projects
 
