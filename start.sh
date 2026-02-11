@@ -130,4 +130,4 @@ wait_for_file "$DOCKER_SOCKET" "dockerd" 30
 echo "  dockerd ready (pid ${DOCKERD_PID})"
 
 echo "=== All daemons started ==="
-echo "Run: source ${BUILD_DIR}/env.sh"
+echo "Run: DOCKER_HOST=unix://${DOCKER_SOCKET} docker ps"
