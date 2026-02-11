@@ -6,7 +6,11 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
+SANDCASTLE_ROOT="${SANDCASTLE_ROOT:-/sandcastle}"
 SANDCASTLE_DOCKER_PREFIX="${SANDCASTLE_DOCKER_PREFIX:-sc_}"
+SANDCASTLE_BRIDGE_CIDR="${SANDCASTLE_BRIDGE_CIDR:-172.30.0.1/24}"
+SANDCASTLE_FIXED_CIDR="${SANDCASTLE_FIXED_CIDR:-172.30.0.0/24}"
+SANDCASTLE_POOL_BASE="${SANDCASTLE_POOL_BASE:-172.31.0.0/16}"
 BUILD_DIR="$(cd "$(dirname "$0")" && pwd)"
 SERVICE_NAME="${SANDCASTLE_DOCKER_PREFIX}docker"
 SERVICE_SRC="${BUILD_DIR}/etc/sc_docker.service"
@@ -16,11 +20,19 @@ echo "Installing ${SERVICE_NAME}.service..."
 echo "  source: ${SERVICE_SRC}"
 echo "  destination: ${SERVICE_DST}"
 echo "  BUILD_DIR: ${BUILD_DIR}"
+echo "  SANDCASTLE_ROOT: ${SANDCASTLE_ROOT}"
 echo "  PREFIX: ${SANDCASTLE_DOCKER_PREFIX}"
+echo "  BRIDGE_CIDR: ${SANDCASTLE_BRIDGE_CIDR}"
+echo "  FIXED_CIDR: ${SANDCASTLE_FIXED_CIDR}"
+echo "  POOL_BASE: ${SANDCASTLE_POOL_BASE}"
 
 # Copy service file, replacing placeholders with actual values
 sed -e "s|__BUILD_DIR__|${BUILD_DIR}|g" \
+    -e "s|__SANDCASTLE_ROOT__|${SANDCASTLE_ROOT}|g" \
     -e "s|__SANDCASTLE_DOCKER_PREFIX__|${SANDCASTLE_DOCKER_PREFIX}|g" \
+    -e "s|__SANDCASTLE_BRIDGE_CIDR__|${SANDCASTLE_BRIDGE_CIDR}|g" \
+    -e "s|__SANDCASTLE_FIXED_CIDR__|${SANDCASTLE_FIXED_CIDR}|g" \
+    -e "s|__SANDCASTLE_POOL_BASE__|${SANDCASTLE_POOL_BASE}|g" \
     "$SERVICE_SRC" > "$SERVICE_DST"
 echo "  installed service file"
 
@@ -44,8 +56,3 @@ echo "  sudo systemctl start ${SERVICE_NAME}    # start now"
 echo "  sudo systemctl stop ${SERVICE_NAME}     # stop"
 echo "  sudo systemctl status ${SERVICE_NAME}   # check status"
 echo "  sudo journalctl -u ${SERVICE_NAME} -f   # follow logs"
-echo ""
-echo "To override SANDCASTLE_ROOT, edit:"
-echo "  sudo systemctl edit ${SERVICE_NAME}"
-echo "  and add: [Service]"
-echo "           Environment=SANDCASTLE_ROOT=/your/path"

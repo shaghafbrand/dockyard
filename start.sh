@@ -8,12 +8,16 @@ fi
 
 SANDCASTLE_ROOT="${SANDCASTLE_ROOT:-/sandcastle}"
 SANDCASTLE_DOCKER_PREFIX="${SANDCASTLE_DOCKER_PREFIX:-sc_}"
+SANDCASTLE_BRIDGE_CIDR="${SANDCASTLE_BRIDGE_CIDR:-172.30.0.1/24}"
+SANDCASTLE_FIXED_CIDR="${SANDCASTLE_FIXED_CIDR:-172.30.0.0/24}"
+SANDCASTLE_POOL_BASE="${SANDCASTLE_POOL_BASE:-172.31.0.0/16}"
+SANDCASTLE_POOL_SIZE="${SANDCASTLE_POOL_SIZE:-24}"
 BUILD_DIR="$(cd "$(dirname "$0")" && pwd)"
 RUNTIME_DIR="${SANDCASTLE_ROOT}/docker-runtime"
 BIN_DIR="${RUNTIME_DIR}/bin"
 ETC_DIR="${RUNTIME_DIR}/etc"
-LOG_DIR="${BUILD_DIR}/log"
-RUN_DIR="${BUILD_DIR}/run"
+LOG_DIR="${RUNTIME_DIR}/log"
+RUN_DIR="${RUNTIME_DIR}/run"
 BRIDGE="${SANDCASTLE_DOCKER_PREFIX}docker0"
 EXEC_ROOT="/run/${SANDCASTLE_DOCKER_PREFIX}docker"
 CONTAINERD_SOCKET="${EXEC_ROOT}/containerd/containerd.sock"
@@ -75,7 +79,7 @@ echo "sysbox: running (systemd)"
 if ! ip link show "$BRIDGE" &>/dev/null; then
     echo "Creating bridge ${BRIDGE}..."
     ip link add "$BRIDGE" type bridge
-    ip addr add 172.30.0.1/24 dev "$BRIDGE"
+    ip addr add "$SANDCASTLE_BRIDGE_CIDR" dev "$BRIDGE"
     ip link set "$BRIDGE" up
 else
     echo "Bridge ${BRIDGE} already exists"
@@ -104,6 +108,8 @@ echo "Starting dockerd..."
     --exec-root "$EXEC_ROOT" \
     --pidfile "${EXEC_ROOT}/dockerd.pid" \
     --bridge "$BRIDGE" \
+    --fixed-cidr "$SANDCASTLE_FIXED_CIDR" \
+    --default-address-pool "base=${SANDCASTLE_POOL_BASE},size=${SANDCASTLE_POOL_SIZE}" \
     --host "unix://${DOCKER_SOCKET}" \
     &>"${LOG_DIR}/dockerd.log" &
 DOCKERD_PID=$!
