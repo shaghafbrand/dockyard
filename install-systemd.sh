@@ -6,18 +6,23 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
+SANDCASTLE_DOCKER_PREFIX="${SANDCASTLE_DOCKER_PREFIX:-sc_}"
 BUILD_DIR="$(cd "$(dirname "$0")" && pwd)"
+SERVICE_NAME="${SANDCASTLE_DOCKER_PREFIX}docker"
 SERVICE_SRC="${BUILD_DIR}/etc/sc_docker.service"
-SERVICE_DST="/etc/systemd/system/sc_docker.service"
+SERVICE_DST="/etc/systemd/system/${SERVICE_NAME}.service"
 
-echo "Installing sc_docker.service..."
+echo "Installing ${SERVICE_NAME}.service..."
 echo "  source: ${SERVICE_SRC}"
 echo "  destination: ${SERVICE_DST}"
 echo "  BUILD_DIR: ${BUILD_DIR}"
+echo "  PREFIX: ${SANDCASTLE_DOCKER_PREFIX}"
 
-# Copy service file, replacing __BUILD_DIR__ placeholder with actual path
-sed "s|__BUILD_DIR__|${BUILD_DIR}|g" "$SERVICE_SRC" > "$SERVICE_DST"
-echo "  installed service file (BUILD_DIR=${BUILD_DIR})"
+# Copy service file, replacing placeholders with actual values
+sed -e "s|__BUILD_DIR__|${BUILD_DIR}|g" \
+    -e "s|__SANDCASTLE_DOCKER_PREFIX__|${SANDCASTLE_DOCKER_PREFIX}|g" \
+    "$SERVICE_SRC" > "$SERVICE_DST"
+echo "  installed service file"
 
 # Set permissions
 chmod 644 "$SERVICE_DST"
@@ -28,19 +33,19 @@ systemctl daemon-reload
 echo "  reloaded systemd daemon"
 
 # Enable the service to start on boot
-systemctl enable sc_docker.service
-echo "  enabled sc_docker.service (will start on boot)"
+systemctl enable "${SERVICE_NAME}.service"
+echo "  enabled ${SERVICE_NAME}.service (will start on boot)"
 
 echo ""
 echo "=== Installation complete ==="
 echo ""
 echo "Commands:"
-echo "  sudo systemctl start sc_docker    # start now"
-echo "  sudo systemctl stop sc_docker     # stop"
-echo "  sudo systemctl status sc_docker   # check status"
-echo "  sudo journalctl -u sc_docker -f   # follow logs"
+echo "  sudo systemctl start ${SERVICE_NAME}    # start now"
+echo "  sudo systemctl stop ${SERVICE_NAME}     # stop"
+echo "  sudo systemctl status ${SERVICE_NAME}   # check status"
+echo "  sudo journalctl -u ${SERVICE_NAME} -f   # follow logs"
 echo ""
 echo "To override SANDCASTLE_ROOT, edit:"
-echo "  sudo systemctl edit sc_docker"
+echo "  sudo systemctl edit ${SERVICE_NAME}"
 echo "  and add: [Service]"
 echo "           Environment=SANDCASTLE_ROOT=/your/path"

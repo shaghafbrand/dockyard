@@ -7,8 +7,11 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 SANDCASTLE_ROOT="${SANDCASTLE_ROOT:-/sandcastle}"
+SANDCASTLE_DOCKER_PREFIX="${SANDCASTLE_DOCKER_PREFIX:-sc_}"
 BUILD_DIR="$(cd "$(dirname "$0")" && pwd)"
 RUN_DIR="${BUILD_DIR}/run"
+BRIDGE="${SANDCASTLE_DOCKER_PREFIX}docker0"
+EXEC_ROOT="/run/${SANDCASTLE_DOCKER_PREFIX}docker"
 
 stop_daemon() {
     local name="$1"
@@ -49,18 +52,18 @@ stop_daemon() {
 }
 
 # Reverse startup order
-stop_daemon dockerd /run/sc_docker/dockerd.pid 20
+stop_daemon dockerd "${EXEC_ROOT}/dockerd.pid" 20
 stop_daemon containerd "${RUN_DIR}/containerd.pid" 10
 
 # Clean up socket
 rm -f "${SANDCASTLE_ROOT}/docker.sock"
-rm -f /run/sc_docker/containerd/containerd.sock
+rm -f "${EXEC_ROOT}/containerd/containerd.sock"
 
 # Remove bridge
-if ip link show sc_docker0 &>/dev/null; then
-    ip link set sc_docker0 down
-    ip link delete sc_docker0
-    echo "Bridge sc_docker0 removed"
+if ip link show "$BRIDGE" &>/dev/null; then
+    ip link set "$BRIDGE" down
+    ip link delete "$BRIDGE"
+    echo "Bridge ${BRIDGE} removed"
 fi
 
 echo "=== All daemons stopped ==="

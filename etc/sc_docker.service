@@ -9,9 +9,10 @@ StartLimitIntervalSec=60
 [Service]
 Type=forking
 Environment=SANDCASTLE_ROOT=/sandcastle
+Environment=SANDCASTLE_DOCKER_PREFIX=sc_
 ExecStart=__BUILD_DIR__/start.sh
 ExecStop=__BUILD_DIR__/stop.sh
-PIDFile=/run/sc_docker/dockerd.pid
+PIDFile=/run/__SANDCASTLE_DOCKER_PREFIX__docker/dockerd.pid
 TimeoutStartSec=60
 TimeoutStopSec=30
 Restart=on-failure
