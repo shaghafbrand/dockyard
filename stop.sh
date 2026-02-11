@@ -18,11 +18,11 @@ fi
 echo "Loading ${ENV_FILE}..."
 source "$ENV_FILE"
 
-SANDCASTLE_ROOT="${SANDCASTLE_ROOT:-/sandcastle}"
-SANDCASTLE_DOCKER_PREFIX="${SANDCASTLE_DOCKER_PREFIX:-sc_}"
-RUN_DIR="${SANDCASTLE_ROOT}/docker-runtime/run"
-BRIDGE="${SANDCASTLE_DOCKER_PREFIX}docker0"
-EXEC_ROOT="/run/${SANDCASTLE_DOCKER_PREFIX}docker"
+DOCKYARD_ROOT="${DOCKYARD_ROOT:-/dockyard}"
+DOCKYARD_DOCKER_PREFIX="${DOCKYARD_DOCKER_PREFIX:-dy_}"
+RUN_DIR="${DOCKYARD_ROOT}/docker-runtime/run"
+BRIDGE="${DOCKYARD_DOCKER_PREFIX}docker0"
+EXEC_ROOT="/run/${DOCKYARD_DOCKER_PREFIX}docker"
 
 stop_daemon() {
     local name="$1"
@@ -67,7 +67,7 @@ stop_daemon dockerd "${EXEC_ROOT}/dockerd.pid" 20
 stop_daemon containerd "${RUN_DIR}/containerd.pid" 10
 
 # Clean up socket
-rm -f "${SANDCASTLE_ROOT}/docker.sock"
+rm -f "${DOCKYARD_ROOT}/docker.sock"
 rm -f "${EXEC_ROOT}/containerd/containerd.sock"
 
 # Remove bridge

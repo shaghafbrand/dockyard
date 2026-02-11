@@ -18,17 +18,17 @@ fi
 echo "Loading ${ENV_FILE}..."
 source "$ENV_FILE"
 
-SANDCASTLE_ROOT="${SANDCASTLE_ROOT:-/sandcastle}"
-SANDCASTLE_DOCKER_PREFIX="${SANDCASTLE_DOCKER_PREFIX:-sc_}"
-SERVICE_NAME="${SANDCASTLE_DOCKER_PREFIX}docker"
+DOCKYARD_ROOT="${DOCKYARD_ROOT:-/dockyard}"
+DOCKYARD_DOCKER_PREFIX="${DOCKYARD_DOCKER_PREFIX:-dy_}"
+SERVICE_NAME="${DOCKYARD_DOCKER_PREFIX}docker"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
-EXEC_ROOT="/run/${SANDCASTLE_DOCKER_PREFIX}docker"
+EXEC_ROOT="/run/${DOCKYARD_DOCKER_PREFIX}docker"
 
-echo "This will remove all installed sandcastle docker files:"
+echo "This will remove all installed dockyard docker files:"
 echo "  ${SERVICE_FILE}              (systemd service)"
-echo "  ${SANDCASTLE_ROOT}/docker-runtime/    (binaries, config, logs, pids)"
-echo "  ${SANDCASTLE_ROOT}/docker/            (images, containers, volumes)"
-echo "  ${SANDCASTLE_ROOT}/docker.sock        (socket)"
+echo "  ${DOCKYARD_ROOT}/docker-runtime/    (binaries, config, logs, pids)"
+echo "  ${DOCKYARD_ROOT}/docker/            (images, containers, volumes)"
+echo "  ${DOCKYARD_ROOT}/docker.sock        (socket)"
 echo "  ${EXEC_ROOT}/                         (runtime state)"
 echo ""
 read -p "Continue? [y/N] " confirm
@@ -66,21 +66,21 @@ if [ -d "$EXEC_ROOT" ]; then
 fi
 
 # --- 3. Remove socket ---
-if [ -e "${SANDCASTLE_ROOT}/docker.sock" ]; then
-    rm -f "${SANDCASTLE_ROOT}/docker.sock"
-    echo "Removed ${SANDCASTLE_ROOT}/docker.sock"
+if [ -e "${DOCKYARD_ROOT}/docker.sock" ]; then
+    rm -f "${DOCKYARD_ROOT}/docker.sock"
+    echo "Removed ${DOCKYARD_ROOT}/docker.sock"
 fi
 
 # --- 4. Remove runtime binaries, config, logs, pids ---
-if [ -d "${SANDCASTLE_ROOT}/docker-runtime" ]; then
-    rm -rf "${SANDCASTLE_ROOT}/docker-runtime"
-    echo "Removed ${SANDCASTLE_ROOT}/docker-runtime/"
+if [ -d "${DOCKYARD_ROOT}/docker-runtime" ]; then
+    rm -rf "${DOCKYARD_ROOT}/docker-runtime"
+    echo "Removed ${DOCKYARD_ROOT}/docker-runtime/"
 fi
 
 # --- 5. Remove docker data (images, containers, volumes) ---
-if [ -d "${SANDCASTLE_ROOT}/docker" ]; then
-    rm -rf "${SANDCASTLE_ROOT}/docker"
-    echo "Removed ${SANDCASTLE_ROOT}/docker/"
+if [ -d "${DOCKYARD_ROOT}/docker" ]; then
+    rm -rf "${DOCKYARD_ROOT}/docker"
+    echo "Removed ${DOCKYARD_ROOT}/docker/"
 fi
 
 echo ""

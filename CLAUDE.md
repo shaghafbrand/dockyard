@@ -26,7 +26,7 @@ sudo ./stop.sh [env-name]
 
 Using a custom instance:
 ```bash
-DOCKER_HOST=unix:///sandcastle/docker.sock docker ps
+DOCKER_HOST=unix:///dockyard/docker.sock docker ps
 ```
 
 ## Architecture
@@ -37,12 +37,12 @@ All scripts take an optional env name argument (default: `default`), loading `en
 
 | Variable | Purpose | Must be unique per instance |
 |----------|---------|----------------------------|
-| `SANDCASTLE_ROOT` | Base directory for data/runtime/socket | Yes |
-| `SANDCASTLE_DOCKER_PREFIX` | Prefix for bridge, service name, exec-root | Yes |
-| `SANDCASTLE_BRIDGE_CIDR` | Bridge IP/mask (e.g. `172.30.0.1/24`) | Yes |
-| `SANDCASTLE_FIXED_CIDR` | Container subnet (e.g. `172.30.0.0/24`) | Yes |
-| `SANDCASTLE_POOL_BASE` | Address pool for user networks | Yes |
-| `SANDCASTLE_POOL_SIZE` | Pool subnet size in CIDR bits | No |
+| `DOCKYARD_ROOT` | Base directory for data/runtime/socket | Yes |
+| `DOCKYARD_DOCKER_PREFIX` | Prefix for bridge, service name, exec-root | Yes |
+| `DOCKYARD_BRIDGE_CIDR` | Bridge IP/mask (e.g. `172.30.0.1/24`) | Yes |
+| `DOCKYARD_FIXED_CIDR` | Container subnet (e.g. `172.30.0.0/24`) | Yes |
+| `DOCKYARD_POOL_BASE` | Address pool for user networks | Yes |
+| `DOCKYARD_POOL_SIZE` | Pool subnet size in CIDR bits | No |
 
 Everything else is derived: `RUNTIME_DIR`, `BRIDGE`, `EXEC_ROOT`, `SERVICE_NAME`, `DOCKER_SOCKET`, `CONTAINERD_SOCKET`.
 
@@ -72,7 +72,7 @@ Each rule uses `-i $BRIDGE` or `-o $BRIDGE` so instances can never interfere wit
 ### Directory Layout (per instance)
 
 ```
-${SANDCASTLE_ROOT}/
+${DOCKYARD_ROOT}/
 ├── docker.sock              # Docker API socket
 ├── docker/                  # Docker data (images, containers, volumes)
 │   └── containerd/          # Containerd content store

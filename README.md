@@ -21,31 +21,31 @@ Dockyard spins up fully independent Docker instances that:
 sudo ./install.sh
 
 # Run a container (uses sysbox-runc automatically)
-DOCKER_HOST=unix:///sandcastle/docker.sock docker run --rm -it alpine ash
+DOCKER_HOST=unix:///dockyard/docker.sock docker run --rm -it alpine ash
 ```
 
 ## Multiple Instances
 
 Each instance is defined by a small env file. Two are included:
 
-**env.default** — primary instance at `/sandcastle` on `172.30.0.0/24`:
+**env.default** — primary instance at `/dockyard` on `172.30.0.0/24`:
 ```bash
-SANDCASTLE_ROOT=/sandcastle
-SANDCASTLE_DOCKER_PREFIX=sc_
-SANDCASTLE_BRIDGE_CIDR=172.30.0.1/24
-SANDCASTLE_FIXED_CIDR=172.30.0.0/24
-SANDCASTLE_POOL_BASE=172.31.0.0/16
-SANDCASTLE_POOL_SIZE=24
+DOCKYARD_ROOT=/dockyard
+DOCKYARD_DOCKER_PREFIX=dy_
+DOCKYARD_BRIDGE_CIDR=172.30.0.1/24
+DOCKYARD_FIXED_CIDR=172.30.0.0/24
+DOCKYARD_POOL_BASE=172.31.0.0/16
+DOCKYARD_POOL_SIZE=24
 ```
 
 **env.thies** — second instance at `/docker2` on `172.32.0.0/24`:
 ```bash
-SANDCASTLE_ROOT=/docker2
-SANDCASTLE_DOCKER_PREFIX=tc_
-SANDCASTLE_BRIDGE_CIDR=172.32.0.1/24
-SANDCASTLE_FIXED_CIDR=172.32.0.0/24
-SANDCASTLE_POOL_BASE=172.33.0.0/16
-SANDCASTLE_POOL_SIZE=24
+DOCKYARD_ROOT=/docker2
+DOCKYARD_DOCKER_PREFIX=tc_
+DOCKYARD_BRIDGE_CIDR=172.32.0.1/24
+DOCKYARD_FIXED_CIDR=172.32.0.0/24
+DOCKYARD_POOL_BASE=172.33.0.0/16
+DOCKYARD_POOL_SIZE=24
 ```
 
 To add another instance, create `env.myname` with unique values for all six variables, then:
@@ -54,7 +54,7 @@ To add another instance, create `env.myname` with unique values for all six vari
 sudo ./install.sh myname
 ```
 
-Each instance runs independently with its own systemd service (`sc_docker`, `tc_docker`, etc.), its own bridge, and its own iptables rules scoped to its bridge interface.
+Each instance runs independently with its own systemd service (`dy_docker`, `tc_docker`, etc.), its own bridge, and its own iptables rules scoped to its bridge interface.
 
 ## Commands
 
@@ -79,7 +79,7 @@ The installer downloads static binaries (cached in `.tmp/` for repeated installs
 | [Sysbox CE](https://github.com/nestybox/sysbox) | 0.6.7 | sysbox-runc, sysbox-mgr, sysbox-fs |
 
 ```
-${SANDCASTLE_ROOT}/
+${DOCKYARD_ROOT}/
 ├── docker.sock                     # Docker API socket
 ├── docker/                         # Images, containers, volumes
 │   └── containerd/
@@ -102,10 +102,10 @@ Each instance creates its own Linux bridge and manages its own iptables rules. D
 Instead, each service adds four rules on startup and removes them on shutdown:
 
 ```
-iptables -I FORWARD -i sc_docker0 -o sc_docker0 -j ACCEPT                              # container ↔ container
-iptables -I FORWARD -i sc_docker0 ! -o sc_docker0 -j ACCEPT                             # container → internet
-iptables -I FORWARD -o sc_docker0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT   # internet → container (replies)
-iptables -t nat -I POSTROUTING -s 172.30.0.0/24 ! -o sc_docker0 -j MASQUERADE           # NAT for outbound
+iptables -I FORWARD -i dy_docker0 -o dy_docker0 -j ACCEPT                              # container ↔ container
+iptables -I FORWARD -i dy_docker0 ! -o dy_docker0 -j ACCEPT                             # container → internet
+iptables -I FORWARD -o dy_docker0 -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT   # internet → container (replies)
+iptables -t nat -I POSTROUTING -s 172.30.0.0/24 ! -o dy_docker0 -j MASQUERADE           # NAT for outbound
 ```
 
 Every rule is scoped to the instance's bridge name, so instances can never interfere with each other or with the system Docker.
@@ -116,13 +116,13 @@ While dockyard instances are running, the system Docker still works normally:
 
 ```bash
 docker -H unix:///run/docker.sock ps        # system docker
-docker -H unix:///sandcastle/docker.sock ps  # dockyard instance
+docker -H unix:///dockyard/docker.sock ps  # dockyard instance
 ```
 
 Or set `DOCKER_HOST` to make a dockyard instance the default:
 
 ```bash
-export DOCKER_HOST=unix:///sandcastle/docker.sock
+export DOCKER_HOST=unix:///dockyard/docker.sock
 ```
 
 ## Prerequisites
