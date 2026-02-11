@@ -30,7 +30,7 @@ Sysbox (0.6.6) runs via systemd (`sysbox-fs.service`, `sysbox-mgr.service`) and 
 | `download_and_extract.sh` | Downloads Docker + sysbox binaries, extracts to `bin/` |
 | `env.sh` | Sets `SANDCASTLE_ROOT` and `DOCKER_HOST` for shell |
 | `install-systemd.sh` | Installs and enables the systemd service |
-| `etc/sc-docker.service` | systemd unit template (uses `__BASE_DIR__` placeholder) |
+| `etc/sc_docker.service` | systemd unit template (uses `__BASE_DIR__` placeholder) |
 
 ## Usage
 
