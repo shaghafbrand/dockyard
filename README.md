@@ -21,7 +21,7 @@ Dockyard spins up fully independent Docker instances that:
 sudo ./install.sh
 
 # Run a container (uses sysbox-runc automatically)
-docker run --rm -it alpine ash
+DOCKER_HOST=unix:///sandcastle/docker.sock docker run --rm -it alpine ash
 ```
 
 ## Multiple Instances
