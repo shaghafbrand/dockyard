@@ -9,12 +9,12 @@ Second Docker daemon (29.2.1, static binaries) at `/docker.sock` with data at `/
 ```
 System Docker                    Our Docker
 ─────────────                    ──────────
-socket:  /run/docker.sock        socket:  /docker.sock
-data:    /var/lib/docker          data:    /docker
+socket:  /run/docker.sock        socket:  $SANDCASTLE_ROOT/docker.sock
+data:    /var/lib/docker          data:    $SANDCASTLE_ROOT/docker
 runtime: runc (default)          runtime: sysbox-runc (default)
 bridge:  docker0 (172.20.0.1/16) bridge:  sc_docker0 (172.30.0.1/24)
 pools:   172.25.0.0/16           pools:   172.31.0.0/16
-containerd: /run/containerd/     containerd: /run/docker-alt/containerd/
+containerd: /run/containerd/     containerd: /run/sc_docker/containerd/
 ```
 
 Sysbox (0.6.6) runs via systemd (`sysbox-fs.service`, `sysbox-mgr.service`) and is shared by both Docker daemons.

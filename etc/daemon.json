@@ -1,8 +1,6 @@
 {
-  "data-root": "/docker",
-  "exec-root": "/run/docker-alt",
-  "pidfile": "/run/docker-alt/dockerd.pid",
-  "hosts": ["unix:///docker.sock"],
+  "exec-root": "/run/sc_docker",
+  "pidfile": "/run/sc_docker/dockerd.pid",
   "bridge": "sc_docker0",
   "fixed-cidr": "172.30.0.0/24",
   "default-address-pools": [

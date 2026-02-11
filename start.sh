@@ -6,19 +6,22 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
+SANDCASTLE_ROOT="${SANDCASTLE_ROOT:-/sandcastle}"
 BASE_DIR="/home/thies/docker"
 BIN_DIR="${BASE_DIR}/bin"
 LOG_DIR="${BASE_DIR}/log"
 RUN_DIR="${BASE_DIR}/run"
-CONTAINERD_SOCKET="/run/docker-alt/containerd/containerd.sock"
+CONTAINERD_SOCKET="/run/sc_docker/containerd/containerd.sock"
+DOCKER_SOCKET="${SANDCASTLE_ROOT}/docker.sock"
+DOCKER_DATA="${SANDCASTLE_ROOT}/docker"
 
 export PATH="${BIN_DIR}:${PATH}"
 
-mkdir -p "$LOG_DIR" "$RUN_DIR" /run/docker-alt/containerd /docker/containerd
+mkdir -p "$LOG_DIR" "$RUN_DIR" /run/sc_docker/containerd "$DOCKER_DATA/containerd"
 
 # Clean up stale sockets/pids from previous runs
-rm -f "$CONTAINERD_SOCKET" /docker.sock
-for pidfile in "${RUN_DIR}/containerd.pid" "/run/docker-alt/dockerd.pid"; do
+rm -f "$CONTAINERD_SOCKET" "$DOCKER_SOCKET"
+for pidfile in "${RUN_DIR}/containerd.pid" "/run/sc_docker/dockerd.pid"; do
     if [ -f "$pidfile" ]; then
         pid=$(cat "$pidfile")
         kill "$pid" 2>/dev/null && sleep 1 || true
@@ -76,8 +79,8 @@ fi
 # --- 3. Start containerd ---
 echo "Starting containerd..."
 "${BIN_DIR}/containerd" \
-    --root /docker/containerd \
-    --state /run/docker-alt/containerd \
+    --root "$DOCKER_DATA/containerd" \
+    --state /run/sc_docker/containerd \
     --address "$CONTAINERD_SOCKET" \
     &>"${LOG_DIR}/containerd.log" &
 CONTAINERD_PID=$!
@@ -92,11 +95,13 @@ echo "Starting dockerd..."
 "${BIN_DIR}/dockerd" \
     --config-file "${BASE_DIR}/etc/daemon.json" \
     --containerd "$CONTAINERD_SOCKET" \
+    --data-root "$DOCKER_DATA" \
+    --host "unix://${DOCKER_SOCKET}" \
     &>"${LOG_DIR}/dockerd.log" &
 DOCKERD_PID=$!
 STARTED_PIDS+=("$DOCKERD_PID")
 
-wait_for_file /docker.sock "dockerd" 30
+wait_for_file "$DOCKER_SOCKET" "dockerd" 30
 echo "  dockerd ready (pid ${DOCKERD_PID})"
 
 echo "=== All daemons started ==="

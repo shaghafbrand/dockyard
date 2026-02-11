@@ -6,6 +6,7 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
+SANDCASTLE_ROOT="${SANDCASTLE_ROOT:-/sandcastle}"
 RUN_DIR="/home/thies/docker/run"
 
 stop_daemon() {
@@ -47,12 +48,12 @@ stop_daemon() {
 }
 
 # Reverse startup order
-stop_daemon dockerd /run/docker-alt/dockerd.pid 20
+stop_daemon dockerd /run/sc_docker/dockerd.pid 20
 stop_daemon containerd "${RUN_DIR}/containerd.pid" 10
 
 # Clean up socket
-rm -f /docker.sock
-rm -f /run/docker-alt/containerd/containerd.sock
+rm -f "${SANDCASTLE_ROOT}/docker.sock"
+rm -f /run/sc_docker/containerd/containerd.sock
 
 # Remove bridge
 if ip link show sc_docker0 &>/dev/null; then

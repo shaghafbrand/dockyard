@@ -1,0 +1,30 @@
+[Unit]
+Description=Sandcastle Docker (sysbox-runc)
+Documentation=file:///home/thies/docker/INFO.md
+After=network-online.target nss-lookup.target firewalld.service sysbox.service time-set.target
+Wants=network-online.target
+Requires=sysbox.service
+StartLimitBurst=3
+StartLimitIntervalSec=60
+
+[Service]
+Type=forking
+Environment=SANDCASTLE_ROOT=/sandcastle
+ExecStart=/home/thies/docker/start.sh
+ExecStop=/home/thies/docker/stop.sh
+PIDFile=/run/sc_docker/dockerd.pid
+TimeoutStartSec=60
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=5
+
+LimitNPROC=infinity
+LimitCORE=infinity
+LimitNOFILE=infinity
+TasksMax=infinity
+Delegate=yes
+KillMode=process
+OOMScoreAdjust=-500
+
+[Install]
+WantedBy=multi-user.target
