@@ -1,11 +1,6 @@
 #!/bin/bash
 set -euo pipefail
 
-if [ "$(id -u)" -ne 0 ]; then
-    echo "Error: must run as root (use sudo)" >&2
-    exit 1
-fi
-
 BUILD_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Load env file
@@ -30,6 +25,27 @@ CONTAINERD_SOCKET="${EXEC_ROOT}/containerd/containerd.sock"
 echo "=== Sandcastle Docker Status (env: ${ENV_NAME}) ==="
 echo ""
 
+# --- env vars ---
+echo "Variables:"
+echo "  SANDCASTLE_ROOT=${SANDCASTLE_ROOT}"
+echo "  SANDCASTLE_DOCKER_PREFIX=${SANDCASTLE_DOCKER_PREFIX}"
+echo "  SANDCASTLE_BRIDGE_CIDR=${SANDCASTLE_BRIDGE_CIDR:-}"
+echo "  SANDCASTLE_FIXED_CIDR=${SANDCASTLE_FIXED_CIDR:-}"
+echo "  SANDCASTLE_POOL_BASE=${SANDCASTLE_POOL_BASE:-}"
+echo "  SANDCASTLE_POOL_SIZE=${SANDCASTLE_POOL_SIZE:-}"
+echo ""
+
+# --- derived vars ---
+echo "Derived:"
+echo "  RUNTIME_DIR=${RUNTIME_DIR}"
+echo "  RUN_DIR=${RUN_DIR}"
+echo "  EXEC_ROOT=${EXEC_ROOT}"
+echo "  BRIDGE=${BRIDGE}"
+echo "  SERVICE_NAME=${SERVICE_NAME}"
+echo "  DOCKER_SOCKET=${DOCKER_SOCKET}"
+echo "  CONTAINERD_SOCKET=${CONTAINERD_SOCKET}"
+echo ""
+
 # --- systemd service ---
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 if [ -f "$SERVICE_FILE" ]; then
@@ -45,7 +61,7 @@ check_pid() {
     if [ -f "$pidfile" ]; then
         local pid
         pid=$(cat "$pidfile")
-        if kill -0 "$pid" 2>/dev/null; then
+        if [ -d "/proc/${pid}" ]; then
             echo "${name}: running (pid ${pid})"
         else
             echo "${name}: dead (stale pid ${pid})"
@@ -77,6 +93,16 @@ if [ -e "$CONTAINERD_SOCKET" ]; then
     echo "containerd: ${CONTAINERD_SOCKET}"
 else
     echo "containerd: ${CONTAINERD_SOCKET} not found"
+fi
+
+# --- connectivity test ---
+echo ""
+echo "Connectivity:"
+if [ -e "$DOCKER_SOCKET" ]; then
+    echo "  DOCKER_HOST=unix://${DOCKER_SOCKET} docker run --rm alpine /bin/ash -c 'ping -c 3 heise.de'"
+    DOCKER_HOST="unix://${DOCKER_SOCKET}" docker run --rm alpine /bin/ash -c 'ping -c 3 heise.de' 2>&1 | sed 's/^/  /'
+else
+    echo "  skipped (docker socket not found)"
 fi
 
 # --- paths ---

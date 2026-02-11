@@ -188,6 +188,7 @@ if [ "$INSTALL_SYSTEMD" = true ]; then
 [Unit]
 Description=Sandcastle Docker (${SERVICE_NAME})
 After=network-online.target nss-lookup.target firewalld.service sysbox.service time-set.target
+Before=docker.service
 Wants=network-online.target
 Requires=sysbox.service
 StartLimitBurst=3
@@ -206,17 +207,23 @@ ExecStartPre=-/bin/rm -f ${EXEC_ROOT}/containerd/containerd.sock ${SANDCASTLE_RO
 # Create bridge
 ExecStartPre=/bin/bash -c 'if ! ip link show ${BRIDGE} &>/dev/null; then ip link add ${BRIDGE} type bridge && ip addr add ${SANDCASTLE_BRIDGE_CIDR} dev ${BRIDGE} && ip link set ${BRIDGE} up; fi'
 
+# Add iptables rules for container networking
+ExecStartPre=/bin/bash -c 'iptables -I FORWARD -i ${BRIDGE} -o ${BRIDGE} -j ACCEPT && iptables -I FORWARD -i ${BRIDGE} ! -o ${BRIDGE} -j ACCEPT && iptables -I FORWARD -o ${BRIDGE} -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT && iptables -t nat -I POSTROUTING -s ${SANDCASTLE_FIXED_CIDR} ! -o ${BRIDGE} -j MASQUERADE'
+
 # Start containerd and wait for socket
 ExecStartPre=/bin/bash -c '${RUNTIME_DIR}/bin/containerd --root ${SANDCASTLE_ROOT}/docker/containerd --state ${EXEC_ROOT}/containerd --address ${EXEC_ROOT}/containerd/containerd.sock &>${RUNTIME_DIR}/log/containerd.log & echo \$! > ${RUNTIME_DIR}/run/containerd.pid; i=0; while [ ! -e ${EXEC_ROOT}/containerd/containerd.sock ]; do sleep 1; i=\$((i+1)); if [ \$i -ge 30 ]; then echo "containerd did not start within 30s" >&2; exit 1; fi; done'
 
 # Start dockerd (waits for socket before exiting so systemd can track via PIDFile)
-ExecStart=/bin/bash -c '${RUNTIME_DIR}/bin/dockerd --config-file ${RUNTIME_DIR}/etc/daemon.json --containerd ${EXEC_ROOT}/containerd/containerd.sock --data-root ${SANDCASTLE_ROOT}/docker --exec-root ${EXEC_ROOT} --pidfile ${EXEC_ROOT}/dockerd.pid --bridge ${BRIDGE} --fixed-cidr ${SANDCASTLE_FIXED_CIDR} --default-address-pool base=${SANDCASTLE_POOL_BASE},size=${SANDCASTLE_POOL_SIZE} --host unix://${SANDCASTLE_ROOT}/docker.sock &>${RUNTIME_DIR}/log/dockerd.log & i=0; while [ ! -e ${SANDCASTLE_ROOT}/docker.sock ]; do sleep 1; i=\$((i+1)); if [ \$i -ge 30 ]; then echo "dockerd did not start within 30s" >&2; exit 1; fi; done'
+ExecStart=/bin/bash -c '${RUNTIME_DIR}/bin/dockerd --config-file ${RUNTIME_DIR}/etc/daemon.json --containerd ${EXEC_ROOT}/containerd/containerd.sock --data-root ${SANDCASTLE_ROOT}/docker --exec-root ${EXEC_ROOT} --pidfile ${EXEC_ROOT}/dockerd.pid --bridge ${BRIDGE} --fixed-cidr ${SANDCASTLE_FIXED_CIDR} --default-address-pool base=${SANDCASTLE_POOL_BASE},size=${SANDCASTLE_POOL_SIZE} --host unix://${SANDCASTLE_ROOT}/docker.sock --iptables=false &>${RUNTIME_DIR}/log/dockerd.log & i=0; while [ ! -e ${SANDCASTLE_ROOT}/docker.sock ]; do sleep 1; i=\$((i+1)); if [ \$i -ge 30 ]; then echo "dockerd did not start within 30s" >&2; exit 1; fi; done'
 
 # Stop containerd
 ExecStopPost=-/bin/bash -c 'if [ -f ${RUNTIME_DIR}/run/containerd.pid ]; then kill \$(cat ${RUNTIME_DIR}/run/containerd.pid) 2>/dev/null; rm -f ${RUNTIME_DIR}/run/containerd.pid; fi'
 
 # Clean up sockets
 ExecStopPost=-/bin/rm -f ${SANDCASTLE_ROOT}/docker.sock ${EXEC_ROOT}/containerd/containerd.sock
+
+# Remove iptables rules
+ExecStopPost=-/bin/bash -c 'iptables -D FORWARD -i ${BRIDGE} -o ${BRIDGE} -j ACCEPT 2>/dev/null; iptables -D FORWARD -i ${BRIDGE} ! -o ${BRIDGE} -j ACCEPT 2>/dev/null; iptables -D FORWARD -o ${BRIDGE} -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null; iptables -t nat -D POSTROUTING -s ${SANDCASTLE_FIXED_CIDR} ! -o ${BRIDGE} -j MASQUERADE 2>/dev/null'
 
 # Remove bridge
 ExecStopPost=-/bin/bash -c 'if ip link show ${BRIDGE} &>/dev/null; then ip link set ${BRIDGE} down 2>/dev/null; ip link delete ${BRIDGE} 2>/dev/null; fi'
