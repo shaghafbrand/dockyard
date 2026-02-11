@@ -23,24 +23,24 @@ Sysbox (0.6.6) runs via systemd (`sysbox-fs.service`, `sysbox-mgr.service`) and 
 
 | File | Purpose |
 |---|---|
-| `setup.sh` | One-time setup: creates dirs, calls `download_and_extract.sh` |
-| `etc/daemon.json` | Custom dockerd config (separate paths, sysbox default, isolated networking) |
+| `install.sh` | Install: download binaries, install systemd service, start daemon |
+| `uninstall.sh` | Uninstall: stop daemon, remove systemd service, remove all files |
 | `start.sh` | Creates bridge, starts containerd + dockerd |
 | `stop.sh` | Stops dockerd + containerd, removes bridge |
-| `download_and_extract.sh` | Downloads Docker + sysbox binaries, extracts to `bin/` |
 | `env.sh` | Sets `SANDCASTLE_ROOT` and `DOCKER_HOST` for shell |
-| `install-systemd.sh` | Installs and enables the systemd service |
-| `etc/sc_docker.service` | systemd unit template (uses `__BASE_DIR__` placeholder) |
+| `etc/daemon.json` | dockerd config (sysbox default, insecure registries) |
+| `etc/sc_docker.service` | systemd unit template |
 
 ## Usage
 
 ```bash
-sudo ./setup.sh                        # one-time: download & install
-sudo ./start.sh                        # start containerd + docker
+sudo -E ./install.sh                   # install, enable systemd, start
 source ./env.sh                        # configure shell
 docker run --rm hello-world            # verify (uses sysbox-runc)
-sudo ./stop.sh                         # stop everything
-sudo ./install-systemd.sh              # install systemd service
+sudo -E ./install.sh --no-systemd     # install without systemd service
+sudo -E ./install.sh --no-start       # install without starting
+sudo -E ./install.sh -h               # show all options and env vars
+sudo -E ./uninstall.sh                 # remove everything
 ```
 
 To use system docker while our docker is running:
