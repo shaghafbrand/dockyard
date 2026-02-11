@@ -9,19 +9,21 @@ Dockyard: multi-instance Docker daemon installer with sysbox-runc as default run
 ## Key Commands
 
 ```bash
-sudo ./install.sh                  # Install using env.default
-sudo ./install.sh thies            # Install using env.thies
-sudo ./install.sh thies --no-start # Install without starting
-./status.sh                        # Status of default instance
-./status.sh thies                  # Status of named instance
-sudo ./uninstall.sh                # Remove default instance
-sudo ./uninstall.sh thies          # Remove named instance
-```
+# Install with baked-in defaults
+sudo ./dockyard.sh install
+sudo ./dockyard.sh install --no-systemd --no-start
 
-Manual start/stop (without systemd):
-```bash
-sudo ./start.sh [env-name]
-sudo ./stop.sh [env-name]
+# Install with custom env
+DOCKYARD_ENV=./env.thies sudo -E ./dockyard.sh install
+
+# Post-install (reads $DOCKYARD_ROOT/env.dockyard automatically)
+sudo ./dockyard.sh start
+sudo ./dockyard.sh stop
+./dockyard.sh status
+sudo ./dockyard.sh uninstall
+
+# Any command with explicit env file
+DOCKYARD_ENV=/path/to/env.dockyard sudo -E ./dockyard.sh status
 ```
 
 Using a custom instance:
@@ -31,9 +33,23 @@ DOCKER_HOST=unix:///dockyard/docker.sock docker ps
 
 ## Architecture
 
-### Environment-Driven Multi-Instance
+### Single Script, Subcommand Interface
 
-All scripts take an optional env name argument (default: `default`), loading `env.<name>`. Each env file defines 6 variables that fully configure an instance:
+Everything lives in `dockyard.sh` with subcommands: `install`, `start`, `stop`, `status`, `uninstall`. The script is fully self-contained: baked-in defaults, embedded daemon.json, no external file dependencies.
+
+### Environment Loading
+
+Unified env loading for all commands:
+
+1. If `DOCKYARD_ENV` is set → source that file
+2. Else if `$DOCKYARD_ROOT/env.dockyard` exists → source it
+3. Otherwise → baked-in defaults apply via `derive_vars()`
+
+For install: step 3 is fine (defaults). For post-install commands: step 2 is the normal path (`env.dockyard` was written by install).
+
+### Environment Variables
+
+Each env file defines 6 variables that fully configure an instance:
 
 | Variable | Purpose | Must be unique per instance |
 |----------|---------|----------------------------|
@@ -48,7 +64,7 @@ Everything else is derived: `RUNTIME_DIR`, `BRIDGE`, `EXEC_ROOT`, `SERVICE_NAME`
 
 ### Downloaded Software
 
-Defined in `install.sh` lines 126–133, cached in `.tmp/`:
+Defined in `cmd_install()`, cached in `.tmp/`:
 
 | Software | Version | Source |
 |----------|---------|--------|
@@ -56,9 +72,9 @@ Defined in `install.sh` lines 126–133, cached in `.tmp/`:
 | Docker Rootless Extras | 29.2.1 | download.docker.com |
 | Sysbox CE (.deb) | 0.6.7 | downloads.nestybox.com |
 
-### install.sh Generates Self-Contained Systemd Services
+### Self-Contained Systemd Services
 
-The service file template (line ~187) expands all variables at install time. The generated `.service` file has no external dependencies on this repo's scripts. This is intentional — the service works even if this repo is deleted.
+The service file template expands all variables at install time. The generated `.service` file has no external dependencies on this repo's scripts. This is intentional — the service works even if this repo is deleted.
 
 ### Networking: Explicit iptables, Not Docker-Managed
 
@@ -73,6 +89,7 @@ Each rule uses `-i $BRIDGE` or `-o $BRIDGE` so instances can never interfere wit
 
 ```
 ${DOCKYARD_ROOT}/
+├── env.dockyard             # Resolved env (written by install)
 ├── docker.sock              # Docker API socket
 ├── docker/                  # Docker data (images, containers, volumes)
 │   └── containerd/          # Containerd content store
@@ -90,8 +107,8 @@ ${DOCKYARD_ROOT}/
 
 ## Script Conventions
 
-- All scripts use `set -euo pipefail`
-- Env loading: `set -a; source "$ENV_FILE"; set +a` (install.sh) or plain `source` (status.sh)
+- `set -euo pipefail`
+- Env loading: `set -a; source "$ENV_FILE"; set +a`
 - Operations are idempotent (bridge creation, iptables removal, socket cleanup)
 - Binaries are cached in `.tmp/` to avoid re-downloading
-- `status.sh` works without root (uses `/proc/$pid` instead of `kill -0`)
+- `status` works without root (uses `/proc/$pid` instead of `kill -0`)
