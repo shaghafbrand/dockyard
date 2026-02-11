@@ -1,0 +1,26 @@
+{
+  "data-root": "/docker",
+  "exec-root": "/run/docker-alt",
+  "pidfile": "/run/docker-alt/dockerd.pid",
+  "hosts": ["unix:///docker.sock"],
+  "bridge": "sc_docker0",
+  "fixed-cidr": "172.30.0.0/24",
+  "default-address-pools": [
+    {
+      "base": "172.31.0.0/16",
+      "size": 24
+    }
+  ],
+  "default-runtime": "sysbox-runc",
+  "runtimes": {
+    "sysbox-runc": {
+      "path": "/usr/bin/sysbox-runc"
+    }
+  },
+  "storage-driver": "overlay2",
+  "insecure-registries": [
+    "192.168.2.50:4443",
+    "100.106.185.92:4443",
+    "100.126.147.91:4443"
+  ]
+}
