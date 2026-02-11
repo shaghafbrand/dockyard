@@ -2,13 +2,24 @@
 set -euo pipefail
 
 if [ "$(id -u)" -ne 0 ]; then
-    echo "Error: must run as root (use sudo -E)" >&2
+    echo "Error: must run as root (use sudo)" >&2
     exit 1
 fi
 
+BUILD_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Load env file
+ENV_NAME="${1:-default}"
+ENV_FILE="${BUILD_DIR}/env.${ENV_NAME}"
+if [ ! -f "$ENV_FILE" ]; then
+    echo "Error: env file not found: ${ENV_FILE}" >&2
+    exit 1
+fi
+echo "Loading ${ENV_FILE}..."
+source "$ENV_FILE"
+
 SANDCASTLE_ROOT="${SANDCASTLE_ROOT:-/sandcastle}"
 SANDCASTLE_DOCKER_PREFIX="${SANDCASTLE_DOCKER_PREFIX:-sc_}"
-BUILD_DIR="$(cd "$(dirname "$0")" && pwd)"
 SERVICE_NAME="${SANDCASTLE_DOCKER_PREFIX}docker"
 SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 EXEC_ROOT="/run/${SANDCASTLE_DOCKER_PREFIX}docker"

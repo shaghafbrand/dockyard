@@ -6,13 +6,24 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
+BUILD_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Load env file
+ENV_NAME="${1:-default}"
+ENV_FILE="${BUILD_DIR}/env.${ENV_NAME}"
+if [ ! -f "$ENV_FILE" ]; then
+    echo "Error: env file not found: ${ENV_FILE}" >&2
+    exit 1
+fi
+echo "Loading ${ENV_FILE}..."
+source "$ENV_FILE"
+
 SANDCASTLE_ROOT="${SANDCASTLE_ROOT:-/sandcastle}"
 SANDCASTLE_DOCKER_PREFIX="${SANDCASTLE_DOCKER_PREFIX:-sc_}"
 SANDCASTLE_BRIDGE_CIDR="${SANDCASTLE_BRIDGE_CIDR:-172.30.0.1/24}"
 SANDCASTLE_FIXED_CIDR="${SANDCASTLE_FIXED_CIDR:-172.30.0.0/24}"
 SANDCASTLE_POOL_BASE="${SANDCASTLE_POOL_BASE:-172.31.0.0/16}"
 SANDCASTLE_POOL_SIZE="${SANDCASTLE_POOL_SIZE:-24}"
-BUILD_DIR="$(cd "$(dirname "$0")" && pwd)"
 RUNTIME_DIR="${SANDCASTLE_ROOT}/docker-runtime"
 BIN_DIR="${RUNTIME_DIR}/bin"
 ETC_DIR="${RUNTIME_DIR}/etc"

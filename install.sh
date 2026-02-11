@@ -3,52 +3,60 @@ set -euo pipefail
 
 usage() {
     cat <<'EOF'
-Usage: sudo -E ./install.sh [OPTIONS]
+Usage: sudo ./install.sh [ENV] [OPTIONS]
 
 Install sandcastle docker: download binaries, install config,
 set up systemd service, and start the daemon.
+
+Arguments:
+  ENV               Environment name to load from env.<ENV> (default: default)
 
 Options:
   --no-systemd    Skip systemd service installation
   --no-start      Don't start the daemon after install
   -h, --help      Show this help
 
-Environment variables:
-  SANDCASTLE_ROOT          Data and runtime root  (default: /sandcastle)
-  SANDCASTLE_DOCKER_PREFIX Prefix for bridge/service names (default: sc_)
-  SANDCASTLE_BRIDGE_CIDR   Bridge IP/mask         (default: 172.30.0.1/24)
-  SANDCASTLE_FIXED_CIDR    Container CIDR range   (default: 172.30.0.0/24)
-  SANDCASTLE_POOL_BASE     Address pool base      (default: 172.31.0.0/16)
-  SANDCASTLE_POOL_SIZE     Address pool subnet    (default: 24)
-
-Example — second instance with different prefix and network:
-  export SANDCASTLE_ROOT=/docker2
-  export SANDCASTLE_DOCKER_PREFIX=tc_
-  export SANDCASTLE_BRIDGE_CIDR=172.32.0.1/24
-  export SANDCASTLE_FIXED_CIDR=172.32.0.0/24
-  export SANDCASTLE_POOL_BASE=172.33.0.0/16
-  sudo -E ./install.sh
+Examples:
+  sudo ./install.sh                # load env.default
+  sudo ./install.sh thies          # load env.thies
+  sudo ./install.sh thies --no-start
 EOF
     exit 0
 }
 
-# --- Parse flags ---
+# --- Parse args ---
 INSTALL_SYSTEMD=true
 START_DAEMON=true
+ENV_NAME=""
 for arg in "$@"; do
     case "$arg" in
         --no-systemd) INSTALL_SYSTEMD=false ;;
         --no-start)   START_DAEMON=false ;;
         -h|--help)    usage ;;
-        *) echo "Unknown option: $arg" >&2; usage ;;
+        --*)          echo "Unknown option: $arg" >&2; usage ;;
+        *)            ENV_NAME="$arg" ;;
     esac
 done
 
 # Must run as root
 if [ "$(id -u)" -ne 0 ]; then
-    echo "Error: must run as root (use sudo -E)" >&2
+    echo "Error: must run as root (use sudo)" >&2
     exit 1
 fi
+
+BUILD_DIR="$(cd "$(dirname "$0")" && pwd)"
+
+# Load env file
+ENV_NAME="${ENV_NAME:-default}"
+ENV_FILE="${BUILD_DIR}/env.${ENV_NAME}"
+if [ ! -f "$ENV_FILE" ]; then
+    echo "Error: env file not found: ${ENV_FILE}" >&2
+    exit 1
+fi
+echo "Loading ${ENV_FILE}..."
+set -a
+source "$ENV_FILE"
+set +a
 
 SANDCASTLE_ROOT="${SANDCASTLE_ROOT:-/sandcastle}"
 SANDCASTLE_DOCKER_PREFIX="${SANDCASTLE_DOCKER_PREFIX:-sc_}"
@@ -56,7 +64,6 @@ SANDCASTLE_BRIDGE_CIDR="${SANDCASTLE_BRIDGE_CIDR:-172.30.0.1/24}"
 SANDCASTLE_FIXED_CIDR="${SANDCASTLE_FIXED_CIDR:-172.30.0.0/24}"
 SANDCASTLE_POOL_BASE="${SANDCASTLE_POOL_BASE:-172.31.0.0/16}"
 SANDCASTLE_POOL_SIZE="${SANDCASTLE_POOL_SIZE:-24}"
-BUILD_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 RUNTIME_DIR="${SANDCASTLE_ROOT}/docker-runtime"
 BRIDGE="${SANDCASTLE_DOCKER_PREFIX}docker0"
@@ -175,16 +182,61 @@ echo "Installed config to ${RUNTIME_DIR}/etc/daemon.json"
 if [ "$INSTALL_SYSTEMD" = true ]; then
     echo ""
     echo "Installing ${SERVICE_NAME}.service..."
-    SERVICE_SRC="${BUILD_DIR}/etc/sc_docker.service"
     SERVICE_DST="/etc/systemd/system/${SERVICE_NAME}.service"
 
-    sed -e "s|__BUILD_DIR__|${BUILD_DIR}|g" \
-        -e "s|__SANDCASTLE_ROOT__|${SANDCASTLE_ROOT}|g" \
-        -e "s|__SANDCASTLE_DOCKER_PREFIX__|${SANDCASTLE_DOCKER_PREFIX}|g" \
-        -e "s|__SANDCASTLE_BRIDGE_CIDR__|${SANDCASTLE_BRIDGE_CIDR}|g" \
-        -e "s|__SANDCASTLE_FIXED_CIDR__|${SANDCASTLE_FIXED_CIDR}|g" \
-        -e "s|__SANDCASTLE_POOL_BASE__|${SANDCASTLE_POOL_BASE}|g" \
-        "$SERVICE_SRC" > "$SERVICE_DST"
+    cat > "$SERVICE_DST" <<SERVICEEOF
+[Unit]
+Description=Sandcastle Docker (${SERVICE_NAME})
+After=network-online.target nss-lookup.target firewalld.service sysbox.service time-set.target
+Wants=network-online.target
+Requires=sysbox.service
+StartLimitBurst=3
+StartLimitIntervalSec=60
+
+[Service]
+Type=forking
+PIDFile=${EXEC_ROOT}/dockerd.pid
+
+# Create directories
+ExecStartPre=/bin/mkdir -p ${RUNTIME_DIR}/log ${RUNTIME_DIR}/run ${EXEC_ROOT}/containerd ${SANDCASTLE_ROOT}/docker/containerd
+
+# Clean stale sockets
+ExecStartPre=-/bin/rm -f ${EXEC_ROOT}/containerd/containerd.sock ${SANDCASTLE_ROOT}/docker.sock
+
+# Create bridge
+ExecStartPre=/bin/bash -c 'if ! ip link show ${BRIDGE} &>/dev/null; then ip link add ${BRIDGE} type bridge && ip addr add ${SANDCASTLE_BRIDGE_CIDR} dev ${BRIDGE} && ip link set ${BRIDGE} up; fi'
+
+# Start containerd and wait for socket
+ExecStartPre=/bin/bash -c '${RUNTIME_DIR}/bin/containerd --root ${SANDCASTLE_ROOT}/docker/containerd --state ${EXEC_ROOT}/containerd --address ${EXEC_ROOT}/containerd/containerd.sock &>${RUNTIME_DIR}/log/containerd.log & echo \$! > ${RUNTIME_DIR}/run/containerd.pid; i=0; while [ ! -e ${EXEC_ROOT}/containerd/containerd.sock ]; do sleep 1; i=\$((i+1)); if [ \$i -ge 30 ]; then echo "containerd did not start within 30s" >&2; exit 1; fi; done'
+
+# Start dockerd (waits for socket before exiting so systemd can track via PIDFile)
+ExecStart=/bin/bash -c '${RUNTIME_DIR}/bin/dockerd --config-file ${RUNTIME_DIR}/etc/daemon.json --containerd ${EXEC_ROOT}/containerd/containerd.sock --data-root ${SANDCASTLE_ROOT}/docker --exec-root ${EXEC_ROOT} --pidfile ${EXEC_ROOT}/dockerd.pid --bridge ${BRIDGE} --fixed-cidr ${SANDCASTLE_FIXED_CIDR} --default-address-pool base=${SANDCASTLE_POOL_BASE},size=${SANDCASTLE_POOL_SIZE} --host unix://${SANDCASTLE_ROOT}/docker.sock &>${RUNTIME_DIR}/log/dockerd.log & i=0; while [ ! -e ${SANDCASTLE_ROOT}/docker.sock ]; do sleep 1; i=\$((i+1)); if [ \$i -ge 30 ]; then echo "dockerd did not start within 30s" >&2; exit 1; fi; done'
+
+# Stop containerd
+ExecStopPost=-/bin/bash -c 'if [ -f ${RUNTIME_DIR}/run/containerd.pid ]; then kill \$(cat ${RUNTIME_DIR}/run/containerd.pid) 2>/dev/null; rm -f ${RUNTIME_DIR}/run/containerd.pid; fi'
+
+# Clean up sockets
+ExecStopPost=-/bin/rm -f ${SANDCASTLE_ROOT}/docker.sock ${EXEC_ROOT}/containerd/containerd.sock
+
+# Remove bridge
+ExecStopPost=-/bin/bash -c 'if ip link show ${BRIDGE} &>/dev/null; then ip link set ${BRIDGE} down 2>/dev/null; ip link delete ${BRIDGE} 2>/dev/null; fi'
+
+TimeoutStartSec=60
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=5
+
+LimitNPROC=infinity
+LimitCORE=infinity
+LimitNOFILE=infinity
+TasksMax=infinity
+Delegate=yes
+KillMode=process
+OOMScoreAdjust=-500
+
+[Install]
+WantedBy=multi-user.target
+SERVICEEOF
     chmod 644 "$SERVICE_DST"
     systemctl daemon-reload
     systemctl enable "${SERVICE_NAME}.service"
@@ -200,7 +252,7 @@ if [ "$START_DAEMON" = true ]; then
         echo "  ${SERVICE_NAME}.service started"
     else
         echo "Starting directly..."
-        "${BUILD_DIR}/start.sh"
+        "${BUILD_DIR}/start.sh" "$ENV_NAME"
     fi
 fi
 

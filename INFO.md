@@ -17,30 +17,39 @@ pools:   172.25.0.0/16           pools:   172.31.0.0/16
 containerd: /run/containerd/     containerd: /run/sc_docker/containerd/
 ```
 
-Sysbox (0.6.6) runs via systemd (`sysbox-fs.service`, `sysbox-mgr.service`) and is shared by both Docker daemons.
+Sysbox (0.6.7) runs via systemd (`sysbox-fs.service`, `sysbox-mgr.service`) and is shared by both Docker daemons.
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `install.sh` | Install: download binaries, install systemd service, start daemon |
-| `uninstall.sh` | Uninstall: stop daemon, remove systemd service, remove all files |
-| `start.sh` | Creates bridge, starts containerd + dockerd |
-| `stop.sh` | Stops dockerd + containerd, removes bridge |
+| `install.sh [env]` | Install: download binaries, generate systemd service, start daemon |
+| `uninstall.sh [env]` | Uninstall: stop daemon, remove systemd service, remove all files |
+| `start.sh [env]` | Creates bridge, starts containerd + dockerd |
+| `stop.sh [env]` | Stops dockerd + containerd, removes bridge |
+| `status.sh [env]` | Shows status of daemons, bridge, sockets |
 | `env.sh` | Sets `SANDCASTLE_ROOT` and `DOCKER_HOST` for shell |
+| `env.default` | Default environment (sc_ prefix, /sandcastle) |
+| `env.thies` | Custom environment (tc_ prefix, /docker2) |
 | `etc/daemon.json` | dockerd config (sysbox default, insecure registries) |
-| `etc/sc_docker.service` | systemd unit template |
+
+All scripts accept an optional `[env]` argument (default: `default`) to load `env.<name>`.
+The systemd service is generated self-contained with all paths hardcoded — no references to start.sh/stop.sh.
 
 ## Usage
 
 ```bash
-sudo -E ./install.sh                   # install, enable systemd, start
-source ./env.sh                        # configure shell
-docker run --rm hello-world            # verify (uses sysbox-runc)
-sudo -E ./install.sh --no-systemd     # install without systemd service
-sudo -E ./install.sh --no-start       # install without starting
-sudo -E ./install.sh -h               # show all options and env vars
-sudo -E ./uninstall.sh                 # remove everything
+sudo ./install.sh                      # install with env.default
+sudo ./install.sh thies               # install with env.thies
+sudo ./install.sh thies --no-systemd  # install without systemd service
+sudo ./install.sh thies --no-start    # install without starting
+sudo ./install.sh -h                  # show all options
+source ./env.sh                       # configure shell
+docker run --rm hello-world           # verify (uses sysbox-runc)
+sudo ./start.sh                       # start (env.default)
+sudo ./stop.sh thies                  # stop (env.thies)
+sudo ./status.sh                      # check status (env.default)
+sudo ./uninstall.sh thies             # remove everything (env.thies)
 ```
 
 To use system docker while our docker is running:
