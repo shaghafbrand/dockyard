@@ -141,6 +141,19 @@ sudo ./uninstall.sh thies    # Removes named instance
 
 This stops the daemon, disables the systemd service, and removes all data including images and containers.
 
+## Related Projects
+
+| Project | What it does | How it differs |
+|---------|-------------|----------------|
+| [Sysbox](https://github.com/nestybox/sysbox) | OCI runtime enabling rootless system workloads (Docker-in-Docker, systemd) inside containers | The runtime Dockyard uses — but doesn't manage multiple daemons or networks |
+| [multidocker](https://github.com/AkihiroSuda/multidocker) | Run multiple Docker daemons for testing different versions | Closest overlap — but test-oriented, no iptables isolation or systemd integration |
+| [Kata Containers](https://github.com/kata-containers/kata-containers) | Lightweight VMs via KVM that look like containers | VM-level isolation per container, heavier overhead, different trust model |
+| [gVisor](https://github.com/google/gvisor) | User-space application kernel intercepting syscalls (`runsc`) | Sandboxes individual containers, doesn't address multi-daemon orchestration |
+| [Firecracker](https://github.com/firecracker-microvm/firecracker) | MicroVM monitor for serverless workloads (powers AWS Lambda) | Per-workload micro-VMs, no Docker API — needs containerd integration |
+| [RootlessKit](https://github.com/rootless-containers/rootlesskit) | Fake-root via user namespaces for rootless Docker/Kubernetes | Makes a single daemon rootless — could be combined with Dockyard |
+
+Dockyard's niche: multi-daemon orchestration with per-instance network isolation, sysbox-runc as default runtime, and self-contained systemd services.
+
 ## Authorship
 
 This project was written entirely by [Claude](https://claude.ai) (Anthropic). [Thies C. Arntzen](https://github.com/thieso2) provided direction and requirements as navigator.
