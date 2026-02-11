@@ -141,6 +141,25 @@ sudo ./uninstall.sh thies    # Removes named instance
 
 This stops the daemon, disables the systemd service, and removes all data including images and containers.
 
+## Troubleshooting
+
+### System Docker Loses Networking After Dockyard Restart
+
+**Symptom:** After restarting a Dockyard Docker instance, containers on the **system Docker** lose network connectivity.
+
+**Cause:** Docker's built-in iptables management (`--iptables=true`, the default) uses global chain names (`DOCKER-FORWARD`, `DOCKER-USER`, etc.). When a Dockyard dockerd starts or restarts, it clobbers the iptables rules that the system Docker depends on, breaking its networking.
+
+**Fix** — three changes in the generated systemd service (`install.sh`):
+
+1. **`--iptables=false`** passed to the Dockyard dockerd, preventing it from touching the global Docker iptables chains.
+
+2. **Explicit bridge-scoped iptables rules** in the systemd unit lifecycle:
+   - `ExecStartPre` inserts 3 FORWARD rules + 1 NAT MASQUERADE rule, all scoped to the instance's bridge via `-i $BRIDGE` / `-o $BRIDGE`
+   - `ExecStopPost` removes those same rules
+   - Bridge-scoped rules can never interfere with the system Docker or other Dockyard instances.
+
+3. **`Before=docker.service`** ordering ensures Dockyard starts before the system Docker, so Docker can set up its own global rules cleanly afterward.
+
 ## Related Projects
 
 | Project | What it does | How it differs |
