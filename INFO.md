@@ -2,7 +2,7 @@
 
 ## Goal
 
-Second Docker daemon (29.2.1, static binaries) at `/docker.sock` with data at `/docker` and sysbox-runc as default runtime. Runs side-by-side with system Docker at `/run/docker.sock`.
+Second Docker daemon (29.2.1, static binaries) with sysbox-runc as default runtime. Runs side-by-side with system Docker. All scripts are portable — `SANDCASTLE_ROOT` (default `/sandcastle`) controls where data and socket live.
 
 ## Architecture
 
@@ -23,20 +23,24 @@ Sysbox (0.6.6) runs via systemd (`sysbox-fs.service`, `sysbox-mgr.service`) and 
 
 | File | Purpose |
 |---|---|
-| `setup.sh` | Downloads Docker 29.2.1 + sysbox 0.6.7, extracts to `bin/` |
+| `setup.sh` | One-time setup: creates dirs, calls `download_and_extract.sh` |
 | `etc/daemon.json` | Custom dockerd config (separate paths, sysbox default, isolated networking) |
 | `start.sh` | Creates bridge, starts containerd + dockerd |
 | `stop.sh` | Stops dockerd + containerd, removes bridge |
-| `env.sh` | Sets `DOCKER_HOST=unix:///docker.sock` for shell |
+| `download_and_extract.sh` | Downloads Docker + sysbox binaries, extracts to `bin/` |
+| `env.sh` | Sets `SANDCASTLE_ROOT` and `DOCKER_HOST` for shell |
+| `install-systemd.sh` | Installs and enables the systemd service |
+| `etc/sc-docker.service` | systemd unit template (uses `__BASE_DIR__` placeholder) |
 
 ## Usage
 
 ```bash
-sudo /home/thies/docker/setup.sh       # one-time: download & install
-sudo /home/thies/docker/start.sh       # start containerd + docker
-source /home/thies/docker/env.sh       # configure shell
+sudo ./setup.sh                        # one-time: download & install
+sudo ./start.sh                        # start containerd + docker
+source ./env.sh                        # configure shell
 docker run --rm hello-world            # verify (uses sysbox-runc)
-sudo /home/thies/docker/stop.sh        # stop everything
+sudo ./stop.sh                         # stop everything
+sudo ./install-systemd.sh              # install systemd service
 ```
 
 To use system docker while our docker is running:

@@ -1,6 +1,5 @@
 [Unit]
 Description=Sandcastle Docker (sysbox-runc)
-Documentation=file:///home/thies/docker/INFO.md
 After=network-online.target nss-lookup.target firewalld.service sysbox.service time-set.target
 Wants=network-online.target
 Requires=sysbox.service
@@ -10,8 +9,8 @@ StartLimitIntervalSec=60
 [Service]
 Type=forking
 Environment=SANDCASTLE_ROOT=/sandcastle
-ExecStart=/home/thies/docker/start.sh
-ExecStop=/home/thies/docker/stop.sh
+ExecStart=__BUILD_DIR__/start.sh
+ExecStop=__BUILD_DIR__/stop.sh
 PIDFile=/run/sc_docker/dockerd.pid
 TimeoutStartSec=60
 TimeoutStopSec=30

@@ -6,17 +6,18 @@ if [ "$(id -u)" -ne 0 ]; then
     exit 1
 fi
 
-BASE_DIR="/home/thies/docker"
-SERVICE_SRC="${BASE_DIR}/etc/sc-docker.service"
+BUILD_DIR="$(cd "$(dirname "$0")" && pwd)"
+SERVICE_SRC="${BUILD_DIR}/etc/sc-docker.service"
 SERVICE_DST="/etc/systemd/system/sc-docker.service"
 
 echo "Installing sc-docker.service..."
 echo "  source: ${SERVICE_SRC}"
 echo "  destination: ${SERVICE_DST}"
+echo "  BUILD_DIR: ${BUILD_DIR}"
 
-# Copy service file
-cp "$SERVICE_SRC" "$SERVICE_DST"
-echo "  copied service file"
+# Copy service file, replacing __BUILD_DIR__ placeholder with actual path
+sed "s|__BUILD_DIR__|${BUILD_DIR}|g" "$SERVICE_SRC" > "$SERVICE_DST"
+echo "  installed service file (BUILD_DIR=${BUILD_DIR})"
 
 # Set permissions
 chmod 644 "$SERVICE_DST"

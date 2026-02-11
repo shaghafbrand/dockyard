@@ -7,10 +7,12 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 SANDCASTLE_ROOT="${SANDCASTLE_ROOT:-/sandcastle}"
-BASE_DIR="/home/thies/docker"
-BIN_DIR="${BASE_DIR}/bin"
-LOG_DIR="${BASE_DIR}/log"
-RUN_DIR="${BASE_DIR}/run"
+BUILD_DIR="$(cd "$(dirname "$0")" && pwd)"
+RUNTIME_DIR="${SANDCASTLE_ROOT}/docker-runtime"
+BIN_DIR="${RUNTIME_DIR}/bin"
+ETC_DIR="${RUNTIME_DIR}/etc"
+LOG_DIR="${BUILD_DIR}/log"
+RUN_DIR="${BUILD_DIR}/run"
 CONTAINERD_SOCKET="/run/sc_docker/containerd/containerd.sock"
 DOCKER_SOCKET="${SANDCASTLE_ROOT}/docker.sock"
 DOCKER_DATA="${SANDCASTLE_ROOT}/docker"
@@ -93,7 +95,7 @@ echo "  containerd ready (pid ${CONTAINERD_PID})"
 # --- 4. Start dockerd ---
 echo "Starting dockerd..."
 "${BIN_DIR}/dockerd" \
-    --config-file "${BASE_DIR}/etc/daemon.json" \
+    --config-file "${ETC_DIR}/daemon.json" \
     --containerd "$CONTAINERD_SOCKET" \
     --data-root "$DOCKER_DATA" \
     --host "unix://${DOCKER_SOCKET}" \
@@ -105,4 +107,4 @@ wait_for_file "$DOCKER_SOCKET" "dockerd" 30
 echo "  dockerd ready (pid ${DOCKERD_PID})"
 
 echo "=== All daemons started ==="
-echo "Run: source ${BASE_DIR}/env.sh"
+echo "Run: source ${BUILD_DIR}/env.sh"

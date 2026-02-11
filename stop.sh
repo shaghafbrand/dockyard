@@ -7,7 +7,8 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 SANDCASTLE_ROOT="${SANDCASTLE_ROOT:-/sandcastle}"
-RUN_DIR="/home/thies/docker/run"
+BUILD_DIR="$(cd "$(dirname "$0")" && pwd)"
+RUN_DIR="${BUILD_DIR}/run"
 
 stop_daemon() {
     local name="$1"
