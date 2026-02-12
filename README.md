@@ -23,8 +23,8 @@ curl -O https://raw.githubusercontent.com/thieso2/dockyard/refs/heads/main/docky
 # Generate a config with randomized, conflict-free networks
 ./dockyard.sh gen-env
 
-# Install
-sudo ./dockyard.sh install
+# Create instance
+sudo ./dockyard.sh create
 
 # Run a container (uses sysbox-runc automatically)
 DOCKER_HOST=unix:///dockyard/docker.sock docker run --rm -it alpine ash
@@ -37,11 +37,11 @@ Each instance needs its own config file with unique values. Use `gen-env` with o
 ```bash
 # First instance (defaults: dy_ prefix, /dockyard root)
 ./dockyard.sh gen-env
-sudo ./dockyard.sh install
+sudo ./dockyard.sh create
 
 # Second instance (custom prefix and root)
 DOCKYARD_DOCKER_PREFIX=tc_ DOCKYARD_ROOT=/docker2 DOCKYARD_ENV=./docker2.env ./dockyard.sh gen-env
-DOCKYARD_ENV=./docker2.env sudo -E ./dockyard.sh install
+DOCKYARD_ENV=./docker2.env sudo -E ./dockyard.sh create
 ```
 
 `gen-env` randomizes bridge and pool networks from `172.16.0.0/12`, checks for conflicts against `ip route` and existing installations, and writes a clean config file:
@@ -64,8 +64,8 @@ Each instance runs independently with its own systemd service (`dy_docker`, `tc_
 
 ```bash
 ./dockyard.sh gen-env [--nocheck]                            # Generate dockyard.env
-sudo ./dockyard.sh install [--no-systemd] [--no-start]      # Install instance
-sudo ./dockyard.sh uninstall                                  # Remove instance completely
+sudo ./dockyard.sh create [--no-systemd] [--no-start]       # Create instance
+sudo ./dockyard.sh destroy                                    # Remove instance completely
 ./dockyard.sh status                                          # Show diagnostics
 sudo ./dockyard.sh start                                      # Start manually (no systemd)
 sudo ./dockyard.sh stop                                       # Stop manually (no systemd)
@@ -94,7 +94,7 @@ ${DOCKYARD_ROOT}/
     ├── bin/                        # dockerd, containerd, sysbox-runc (static binaries)
     ├── etc/
     │   ├── daemon.json             # Daemon configuration
-    │   └── dockyard.env            # Copy of config (written by install)
+    │   └── dockyard.env            # Copy of config (written by create)
     ├── log/                        # containerd.log, dockerd.log
     └── run/                        # PID files
 
@@ -102,7 +102,7 @@ ${DOCKYARD_ROOT}/
 /run/${PREFIX}docker/                         # Runtime state (tmpfs)
 ```
 
-The systemd service file is generated with all paths hardcoded at install time. It has no dependency on this repository — you can delete the repo after install and everything keeps running.
+The systemd service file is generated with all paths hardcoded at create time. It has no dependency on this repository — you can delete the repo after creation and everything keeps running.
 
 ## How Networking Works
 
@@ -141,13 +141,13 @@ export DOCKER_HOST=unix:///dockyard/docker.sock
 - `curl`, `tar`, `ar` for binary downloads
 - Root access for installation
 
-## Uninstall
+## Destroy
 
 ```bash
-sudo ./dockyard.sh uninstall
+sudo ./dockyard.sh destroy
 
 # For a non-default instance
-DOCKYARD_ENV=./docker2.env sudo -E ./dockyard.sh uninstall
+DOCKYARD_ENV=./docker2.env sudo -E ./dockyard.sh destroy
 ```
 
 This stops the daemon, disables the systemd service, and removes all data including images and containers.

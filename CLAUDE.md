@@ -13,18 +13,18 @@ Dockyard: multi-instance Docker daemon installer with sysbox-runc as default run
 ./dockyard.sh gen-env
 DOCKYARD_DOCKER_PREFIX=test_ DOCKYARD_ROOT=/test ./dockyard.sh gen-env
 
-# Install (requires dockyard.env)
-sudo ./dockyard.sh install
-sudo ./dockyard.sh install --no-systemd --no-start
+# Create instance (requires dockyard.env)
+sudo ./dockyard.sh create
+sudo ./dockyard.sh create --no-systemd --no-start
 
-# Install with explicit env file
-DOCKYARD_ENV=./custom.env sudo -E ./dockyard.sh install
+# Create with explicit env file
+DOCKYARD_ENV=./custom.env sudo -E ./dockyard.sh create
 
-# Post-install (reads ./dockyard.env or $DOCKYARD_ENV)
+# Post-create (reads ./dockyard.env or $DOCKYARD_ENV)
 sudo ./dockyard.sh start
 sudo ./dockyard.sh stop
 ./dockyard.sh status
-sudo ./dockyard.sh uninstall
+sudo ./dockyard.sh destroy
 ```
 
 Using a custom instance:
@@ -36,7 +36,7 @@ DOCKER_HOST=unix:///dockyard/docker.sock docker ps
 
 ### Single Script, Subcommand Interface
 
-Everything lives in `dockyard.sh` with subcommands: `gen-env`, `install`, `start`, `stop`, `status`, `uninstall`. The script is fully self-contained: embedded daemon.json, no external file dependencies.
+Everything lives in `dockyard.sh` with subcommands: `gen-env`, `create`, `start`, `stop`, `status`, `destroy`. The script is fully self-contained: embedded daemon.json, no external file dependencies.
 
 ### Environment Loading
 
@@ -77,7 +77,7 @@ Everything else is derived: `RUNTIME_DIR`, `BRIDGE`, `EXEC_ROOT`, `SERVICE_NAME`
 
 ### Collision Checks (Shared Helpers)
 
-Three reusable helpers used by both `gen-env` and `install`:
+Three reusable helpers used by both `gen-env` and `create`:
 
 - `check_prefix_conflict()` — bridge exists, exec-root dir exists, systemd service exists
 - `check_root_conflict()` — `docker-runtime/bin/` already present
@@ -85,7 +85,7 @@ Three reusable helpers used by both `gen-env` and `install`:
 
 ### Downloaded Software
 
-Defined in `cmd_install()`, cached in `.tmp/`:
+Defined in `cmd_create()`, cached in `.tmp/`:
 
 | Software | Version | Source |
 |----------|---------|--------|
@@ -95,7 +95,7 @@ Defined in `cmd_install()`, cached in `.tmp/`:
 
 ### Self-Contained Systemd Services
 
-The service file template expands all variables at install time. The generated `.service` file has no external dependencies on this repo's scripts. This is intentional — the service works even if this repo is deleted.
+The service file template expands all variables at create time. The generated `.service` file has no external dependencies on this repo's scripts. This is intentional — the service works even if this repo is deleted.
 
 ### Networking: Explicit iptables, Not Docker-Managed
 
@@ -117,7 +117,7 @@ ${DOCKYARD_ROOT}/
     ├── bin/                 # dockerd, containerd, sysbox-runc, etc.
     ├── etc/
     │   ├── daemon.json      # Docker daemon config
-    │   └── dockyard.env     # Copy of config (written by install)
+    │   └── dockyard.env     # Copy of config (written by create)
     ├── log/                 # containerd.log, dockerd.log
     └── run/                 # containerd.pid
 

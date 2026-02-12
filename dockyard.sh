@@ -265,15 +265,15 @@ EOF
     cat "$out_file"
 }
 
-cmd_install() {
+cmd_create() {
     local INSTALL_SYSTEMD=true
     local START_DAEMON=true
     for arg in "$@"; do
         case "$arg" in
             --no-systemd) INSTALL_SYSTEMD=false ;;
             --no-start)   START_DAEMON=false ;;
-            -h|--help)    install_usage ;;
-            --*)          echo "Unknown option: $arg" >&2; install_usage ;;
+            -h|--help)    create_usage ;;
+            --*)          echo "Unknown option: $arg" >&2; create_usage ;;
         esac
     done
 
@@ -369,7 +369,7 @@ cmd_install() {
 DAEMONJSONEOF
     echo "Installed config to ${ETC_DIR}/daemon.json"
 
-    # Copy config file into install dir for reference
+    # Copy config file into created instance for reference
     local src_env="${DOCKYARD_ENV:-./dockyard.env}"
     cp "$src_env" "${ETC_DIR}/dockyard.env"
     echo "Installed env to ${ETC_DIR}/dockyard.env"
@@ -670,7 +670,7 @@ cmd_status() {
     echo "  logs:     ${LOG_DIR}"
 }
 
-cmd_uninstall() {
+cmd_destroy() {
     require_root
 
     local SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
@@ -764,11 +764,11 @@ Usage: ./dockyard.sh <command> [options]
 
 Commands:
   gen-env     Generate a conflict-free dockyard.env config file
-  install     Download binaries, install config, set up systemd, start daemon
+  create      Download binaries, install config, set up systemd, start daemon
   start       Start daemons manually (without systemd)
   stop        Stop manually started daemons
   status      Show instance status
-  uninstall   Stop and remove everything
+  destroy     Stop and remove everything
 
 All commands except gen-env require a config file:
   1. $DOCKYARD_ENV (if set)
@@ -776,16 +776,16 @@ All commands except gen-env require a config file:
 
 Examples:
   ./dockyard.sh gen-env
-  sudo ./dockyard.sh install
-  sudo ./dockyard.sh install --no-systemd --no-start
+  sudo ./dockyard.sh create
+  sudo ./dockyard.sh create --no-systemd --no-start
   sudo ./dockyard.sh start
   sudo ./dockyard.sh stop
   ./dockyard.sh status
-  sudo ./dockyard.sh uninstall
+  sudo ./dockyard.sh destroy
 
   # Multiple instances
   DOCKYARD_DOCKER_PREFIX=test_ DOCKYARD_ROOT=/test ./dockyard.sh gen-env
-  DOCKYARD_ENV=./dockyard.env sudo -E ./dockyard.sh install
+  DOCKYARD_ENV=./dockyard.env sudo -E ./dockyard.sh create
 EOF
     exit 0
 }
@@ -819,11 +819,11 @@ EOF
     exit 0
 }
 
-install_usage() {
+create_usage() {
     cat <<'EOF'
-Usage: sudo ./dockyard.sh install [OPTIONS]
+Usage: sudo ./dockyard.sh create [OPTIONS]
 
-Install dockyard docker: download binaries, install config,
+Create a dockyard instance: download binaries, install config,
 set up systemd service, and start the daemon.
 
 Requires a dockyard.env config file (run gen-env first).
@@ -834,9 +834,9 @@ Options:
   -h, --help      Show this help
 
 Examples:
-  ./dockyard.sh gen-env && sudo ./dockyard.sh install
-  sudo ./dockyard.sh install --no-systemd --no-start
-  DOCKYARD_ENV=./custom.env sudo -E ./dockyard.sh install
+  ./dockyard.sh gen-env && sudo ./dockyard.sh create
+  sudo ./dockyard.sh create --no-systemd --no-start
+  DOCKYARD_ENV=./custom.env sudo -E ./dockyard.sh create
 EOF
     exit 0
 }
@@ -850,10 +850,10 @@ case "$COMMAND" in
     gen-env)
         cmd_gen_env "$@"
         ;;
-    install)
+    create)
         load_env
         derive_vars
-        cmd_install "$@"
+        cmd_create "$@"
         ;;
     start)
         load_env
@@ -870,10 +870,10 @@ case "$COMMAND" in
         derive_vars
         cmd_status
         ;;
-    uninstall)
+    destroy)
         load_env
         derive_vars
-        cmd_uninstall
+        cmd_destroy
         ;;
     -h|--help|"")
         usage
