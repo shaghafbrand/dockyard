@@ -17,6 +17,9 @@ Dockyard spins up fully independent Docker instances that:
 ## Quick Start
 
 ```bash
+# Download
+curl -O https://raw.githubusercontent.com/thieso2/dockyard/refs/heads/main/dockyard.sh && chmod +x dockyard.sh
+
 # Generate a config with randomized, conflict-free networks
 ./dockyard.sh gen-env
 
