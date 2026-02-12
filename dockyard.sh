@@ -383,73 +383,7 @@ DAEMONJSONEOF
     # --- 2. Install systemd service ---
     if [ "$INSTALL_SYSTEMD" = true ]; then
         echo ""
-        echo "Installing ${SERVICE_NAME}.service..."
-        local SERVICE_DST="/etc/systemd/system/${SERVICE_NAME}.service"
-
-        cat > "$SERVICE_DST" <<SERVICEEOF
-[Unit]
-Description=Dockyard Docker (${SERVICE_NAME})
-After=network-online.target nss-lookup.target firewalld.service sysbox.service time-set.target
-Before=docker.service
-Wants=network-online.target
-Requires=sysbox.service
-StartLimitBurst=3
-StartLimitIntervalSec=60
-
-[Service]
-Type=forking
-PIDFile=${EXEC_ROOT}/dockerd.pid
-
-# Create directories
-ExecStartPre=/bin/mkdir -p ${LOG_DIR} ${RUN_DIR} ${EXEC_ROOT}/containerd ${DOCKER_DATA}/containerd
-
-# Clean stale sockets
-ExecStartPre=-/bin/rm -f ${CONTAINERD_SOCKET} ${DOCKER_SOCKET}
-
-# Create bridge
-ExecStartPre=/bin/bash -c 'if ! ip link show ${BRIDGE} &>/dev/null; then ip link add ${BRIDGE} type bridge && ip addr add ${DOCKYARD_BRIDGE_CIDR} dev ${BRIDGE} && ip link set ${BRIDGE} up; fi'
-
-# Add iptables rules for container networking
-ExecStartPre=/bin/bash -c 'iptables -I FORWARD -i ${BRIDGE} -o ${BRIDGE} -j ACCEPT && iptables -I FORWARD -i ${BRIDGE} ! -o ${BRIDGE} -j ACCEPT && iptables -I FORWARD -o ${BRIDGE} -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT && iptables -t nat -I POSTROUTING -s ${DOCKYARD_FIXED_CIDR} ! -o ${BRIDGE} -j MASQUERADE'
-
-# Start containerd and wait for socket
-ExecStartPre=/bin/bash -c '${BIN_DIR}/containerd --root ${DOCKER_DATA}/containerd --state ${EXEC_ROOT}/containerd --address ${CONTAINERD_SOCKET} &>${LOG_DIR}/containerd.log & echo \$! > ${RUN_DIR}/containerd.pid; i=0; while [ ! -e ${CONTAINERD_SOCKET} ]; do sleep 1; i=\$((i+1)); if [ \$i -ge 30 ]; then echo "containerd did not start within 30s" >&2; exit 1; fi; done'
-
-# Start dockerd
-ExecStart=/bin/bash -c '${BIN_DIR}/dockerd --config-file ${ETC_DIR}/daemon.json --containerd ${CONTAINERD_SOCKET} --data-root ${DOCKER_DATA} --exec-root ${EXEC_ROOT} --pidfile ${EXEC_ROOT}/dockerd.pid --bridge ${BRIDGE} --fixed-cidr ${DOCKYARD_FIXED_CIDR} --default-address-pool base=${DOCKYARD_POOL_BASE},size=${DOCKYARD_POOL_SIZE} --host unix://${DOCKER_SOCKET} --iptables=false &>${LOG_DIR}/dockerd.log & i=0; while [ ! -e ${DOCKER_SOCKET} ]; do sleep 1; i=\$((i+1)); if [ \$i -ge 30 ]; then echo "dockerd did not start within 30s" >&2; exit 1; fi; done'
-
-# Stop containerd
-ExecStopPost=-/bin/bash -c 'if [ -f ${RUN_DIR}/containerd.pid ]; then kill \$(cat ${RUN_DIR}/containerd.pid) 2>/dev/null; rm -f ${RUN_DIR}/containerd.pid; fi'
-
-# Clean up sockets
-ExecStopPost=-/bin/rm -f ${DOCKER_SOCKET} ${CONTAINERD_SOCKET}
-
-# Remove iptables rules
-ExecStopPost=-/bin/bash -c 'iptables -D FORWARD -i ${BRIDGE} -o ${BRIDGE} -j ACCEPT 2>/dev/null; iptables -D FORWARD -i ${BRIDGE} ! -o ${BRIDGE} -j ACCEPT 2>/dev/null; iptables -D FORWARD -o ${BRIDGE} -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null; iptables -t nat -D POSTROUTING -s ${DOCKYARD_FIXED_CIDR} ! -o ${BRIDGE} -j MASQUERADE 2>/dev/null'
-
-# Remove bridge
-ExecStopPost=-/bin/bash -c 'if ip link show ${BRIDGE} &>/dev/null; then ip link set ${BRIDGE} down 2>/dev/null; ip link delete ${BRIDGE} 2>/dev/null; fi'
-
-TimeoutStartSec=60
-TimeoutStopSec=30
-Restart=on-failure
-RestartSec=5
-
-LimitNPROC=infinity
-LimitCORE=infinity
-LimitNOFILE=infinity
-TasksMax=infinity
-Delegate=yes
-KillMode=process
-OOMScoreAdjust=-500
-
-[Install]
-WantedBy=multi-user.target
-SERVICEEOF
-        chmod 644 "$SERVICE_DST"
-        systemctl daemon-reload
-        systemctl enable "${SERVICE_NAME}.service"
-        echo "  enabled ${SERVICE_NAME}.service (will start on boot)"
+        cmd_enable
     fi
 
     # --- 3. Start daemon ---
@@ -474,12 +408,6 @@ SERVICEEOF
     echo "Manage this instance with the installed copy:"
     echo "  sudo ${BIN_DIR}/dockyard.sh status"
     echo "  sudo ${BIN_DIR}/dockyard.sh destroy"
-    if [ "$INSTALL_SYSTEMD" = true ]; then
-        echo ""
-        echo "  sudo systemctl status ${SERVICE_NAME}   # check status"
-        echo "  sudo systemctl stop ${SERVICE_NAME}     # stop"
-        echo "  sudo journalctl -u ${SERVICE_NAME} -f   # follow logs"
-    fi
 }
 
 cmd_start() {
@@ -680,6 +608,110 @@ cmd_status() {
     echo "  logs:     ${LOG_DIR}"
 }
 
+cmd_enable() {
+    require_root
+
+    local SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
+    if [ -f "$SERVICE_FILE" ]; then
+        echo "Error: ${SERVICE_FILE} already exists." >&2
+        exit 1
+    fi
+
+    echo "Installing ${SERVICE_NAME}.service..."
+
+    cat > "$SERVICE_FILE" <<SERVICEEOF
+[Unit]
+Description=Dockyard Docker (${SERVICE_NAME})
+After=network-online.target nss-lookup.target firewalld.service sysbox.service time-set.target
+Before=docker.service
+Wants=network-online.target
+Requires=sysbox.service
+StartLimitBurst=3
+StartLimitIntervalSec=60
+
+[Service]
+Type=forking
+PIDFile=${EXEC_ROOT}/dockerd.pid
+
+# Create directories
+ExecStartPre=/bin/mkdir -p ${LOG_DIR} ${RUN_DIR} ${EXEC_ROOT}/containerd ${DOCKER_DATA}/containerd
+
+# Clean stale sockets
+ExecStartPre=-/bin/rm -f ${CONTAINERD_SOCKET} ${DOCKER_SOCKET}
+
+# Create bridge
+ExecStartPre=/bin/bash -c 'if ! ip link show ${BRIDGE} &>/dev/null; then ip link add ${BRIDGE} type bridge && ip addr add ${DOCKYARD_BRIDGE_CIDR} dev ${BRIDGE} && ip link set ${BRIDGE} up; fi'
+
+# Add iptables rules for container networking
+ExecStartPre=/bin/bash -c 'iptables -I FORWARD -i ${BRIDGE} -o ${BRIDGE} -j ACCEPT && iptables -I FORWARD -i ${BRIDGE} ! -o ${BRIDGE} -j ACCEPT && iptables -I FORWARD -o ${BRIDGE} -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT && iptables -t nat -I POSTROUTING -s ${DOCKYARD_FIXED_CIDR} ! -o ${BRIDGE} -j MASQUERADE'
+
+# Start containerd and wait for socket
+ExecStartPre=/bin/bash -c '${BIN_DIR}/containerd --root ${DOCKER_DATA}/containerd --state ${EXEC_ROOT}/containerd --address ${CONTAINERD_SOCKET} &>${LOG_DIR}/containerd.log & echo \$! > ${RUN_DIR}/containerd.pid; i=0; while [ ! -e ${CONTAINERD_SOCKET} ]; do sleep 1; i=\$((i+1)); if [ \$i -ge 30 ]; then echo "containerd did not start within 30s" >&2; exit 1; fi; done'
+
+# Start dockerd
+ExecStart=/bin/bash -c '${BIN_DIR}/dockerd --config-file ${ETC_DIR}/daemon.json --containerd ${CONTAINERD_SOCKET} --data-root ${DOCKER_DATA} --exec-root ${EXEC_ROOT} --pidfile ${EXEC_ROOT}/dockerd.pid --bridge ${BRIDGE} --fixed-cidr ${DOCKYARD_FIXED_CIDR} --default-address-pool base=${DOCKYARD_POOL_BASE},size=${DOCKYARD_POOL_SIZE} --host unix://${DOCKER_SOCKET} --iptables=false &>${LOG_DIR}/dockerd.log & i=0; while [ ! -e ${DOCKER_SOCKET} ]; do sleep 1; i=\$((i+1)); if [ \$i -ge 30 ]; then echo "dockerd did not start within 30s" >&2; exit 1; fi; done'
+
+# Stop containerd
+ExecStopPost=-/bin/bash -c 'if [ -f ${RUN_DIR}/containerd.pid ]; then kill \$(cat ${RUN_DIR}/containerd.pid) 2>/dev/null; rm -f ${RUN_DIR}/containerd.pid; fi'
+
+# Clean up sockets
+ExecStopPost=-/bin/rm -f ${DOCKER_SOCKET} ${CONTAINERD_SOCKET}
+
+# Remove iptables rules
+ExecStopPost=-/bin/bash -c 'iptables -D FORWARD -i ${BRIDGE} -o ${BRIDGE} -j ACCEPT 2>/dev/null; iptables -D FORWARD -i ${BRIDGE} ! -o ${BRIDGE} -j ACCEPT 2>/dev/null; iptables -D FORWARD -o ${BRIDGE} -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT 2>/dev/null; iptables -t nat -D POSTROUTING -s ${DOCKYARD_FIXED_CIDR} ! -o ${BRIDGE} -j MASQUERADE 2>/dev/null'
+
+# Remove bridge
+ExecStopPost=-/bin/bash -c 'if ip link show ${BRIDGE} &>/dev/null; then ip link set ${BRIDGE} down 2>/dev/null; ip link delete ${BRIDGE} 2>/dev/null; fi'
+
+TimeoutStartSec=60
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=5
+
+LimitNPROC=infinity
+LimitCORE=infinity
+LimitNOFILE=infinity
+TasksMax=infinity
+Delegate=yes
+KillMode=process
+OOMScoreAdjust=-500
+
+[Install]
+WantedBy=multi-user.target
+SERVICEEOF
+    chmod 644 "$SERVICE_FILE"
+    systemctl daemon-reload
+    systemctl enable "${SERVICE_NAME}.service"
+    echo "  enabled ${SERVICE_NAME}.service (will start on boot)"
+    echo ""
+    echo "  sudo systemctl start ${SERVICE_NAME}    # start"
+    echo "  sudo systemctl status ${SERVICE_NAME}   # check status"
+    echo "  sudo journalctl -u ${SERVICE_NAME} -f   # follow logs"
+}
+
+cmd_disable() {
+    require_root
+
+    local SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
+    if [ ! -f "$SERVICE_FILE" ]; then
+        echo "Error: ${SERVICE_FILE} does not exist." >&2
+        exit 1
+    fi
+
+    if systemctl is-active --quiet "${SERVICE_NAME}.service"; then
+        echo "Stopping ${SERVICE_NAME}..."
+        systemctl stop "${SERVICE_NAME}.service"
+        echo "  stopped"
+    fi
+    if systemctl is-enabled --quiet "${SERVICE_NAME}.service" 2>/dev/null; then
+        systemctl disable "${SERVICE_NAME}.service"
+        echo "  disabled"
+    fi
+    rm -f "$SERVICE_FILE"
+    systemctl daemon-reload
+    echo "Removed ${SERVICE_FILE}"
+}
+
 cmd_destroy() {
     require_root
 
@@ -698,21 +730,9 @@ cmd_destroy() {
         exit 0
     fi
 
-    # --- 1. Stop and remove systemd service ---
+    # --- 1. Stop and remove systemd service (or stop daemons directly) ---
     if [ -f "$SERVICE_FILE" ]; then
-        echo "Removing ${SERVICE_NAME}.service..."
-        if systemctl is-active --quiet "${SERVICE_NAME}.service"; then
-            echo "  stopping ${SERVICE_NAME}..."
-            systemctl stop "${SERVICE_NAME}.service"
-            echo "  stopped"
-        fi
-        if systemctl is-enabled --quiet "${SERVICE_NAME}.service" 2>/dev/null; then
-            systemctl disable "${SERVICE_NAME}.service"
-            echo "  disabled"
-        fi
-        rm -f "$SERVICE_FILE"
-        systemctl daemon-reload
-        echo "  removed ${SERVICE_FILE}"
+        cmd_disable
     else
         # No systemd service — stop daemons directly
         for pidfile in "${EXEC_ROOT}/dockerd.pid" "${RUN_DIR}/containerd.pid"; do
@@ -775,6 +795,8 @@ Usage: ./dockyard.sh <command> [options]
 Commands:
   gen-env     Generate a conflict-free dockyard.env config file
   create      Download binaries, install config, set up systemd, start daemon
+  enable      Install systemd service for this instance
+  disable     Remove systemd service for this instance
   start       Start daemons manually (without systemd)
   stop        Stop manually started daemons
   status      Show instance status
@@ -866,6 +888,16 @@ case "$COMMAND" in
         load_env
         derive_vars
         cmd_create "$@"
+        ;;
+    enable)
+        load_env
+        derive_vars
+        cmd_enable
+        ;;
+    disable)
+        load_env
+        derive_vars
+        cmd_disable
         ;;
     start)
         load_env

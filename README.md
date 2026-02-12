@@ -65,10 +65,12 @@ Each instance runs independently with its own systemd service (`dy_docker`, `tc_
 ```bash
 ./dockyard.sh gen-env [--nocheck]                            # Generate dockyard.env
 sudo ./dockyard.sh create [--no-systemd] [--no-start]       # Create instance
-sudo ./dockyard.sh destroy                                    # Remove instance completely
-./dockyard.sh status                                          # Show diagnostics
+sudo ./dockyard.sh enable                                     # Install systemd service
+sudo ./dockyard.sh disable                                    # Remove systemd service
 sudo ./dockyard.sh start                                      # Start manually (no systemd)
 sudo ./dockyard.sh stop                                       # Stop manually (no systemd)
+./dockyard.sh status                                          # Show diagnostics
+sudo ./dockyard.sh destroy                                    # Remove instance completely
 ```
 
 All commands except `gen-env` require a config file. Lookup order:

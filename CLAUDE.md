@@ -36,7 +36,7 @@ DOCKER_HOST=unix:///dockyard/docker.sock docker ps
 
 ### Single Script, Subcommand Interface
 
-Everything lives in `dockyard.sh` with subcommands: `gen-env`, `create`, `start`, `stop`, `status`, `destroy`. The script is fully self-contained: embedded daemon.json, no external file dependencies.
+Everything lives in `dockyard.sh` with subcommands: `gen-env`, `create`, `enable`, `disable`, `start`, `stop`, `status`, `destroy`. The script is fully self-contained: embedded daemon.json, no external file dependencies.
 
 ### Environment Loading
 
