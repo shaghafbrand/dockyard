@@ -782,6 +782,15 @@ cmd_destroy() {
     rm -f "${ETC_DIR}/dockyard.env"
     echo "Removed ${ETC_DIR}/dockyard.env"
 
+    # --- 7. Remove DOCKYARD_ROOT if empty ---
+    if [ -d "$DOCKYARD_ROOT" ]; then
+        if rmdir "$DOCKYARD_ROOT" 2>/dev/null; then
+            echo "Removed ${DOCKYARD_ROOT}/ (was empty)"
+        else
+            echo "Note: ${DOCKYARD_ROOT}/ not empty, left in place"
+        fi
+    fi
+
     echo ""
     echo "=== Uninstall complete ==="
 }
