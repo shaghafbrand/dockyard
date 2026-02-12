@@ -16,7 +16,7 @@ sudo ./dockyard.sh install --no-systemd --no-start
 # Install with custom env
 DOCKYARD_ENV=./env.thies sudo -E ./dockyard.sh install
 
-# Post-install (reads $DOCKYARD_ROOT/env.dockyard automatically)
+# Post-install (reads $DOCKYARD_ROOT/docker-runtime/etc/env.dockyard automatically)
 sudo ./dockyard.sh start
 sudo ./dockyard.sh stop
 ./dockyard.sh status
@@ -42,7 +42,7 @@ Everything lives in `dockyard.sh` with subcommands: `install`, `start`, `stop`, 
 Unified env loading for all commands:
 
 1. If `DOCKYARD_ENV` is set → source that file
-2. Else if `$DOCKYARD_ROOT/env.dockyard` exists → source it
+2. Else if `$DOCKYARD_ROOT/docker-runtime/etc/env.dockyard` exists → source it
 3. Otherwise → baked-in defaults apply via `derive_vars()`
 
 For install: step 3 is fine (defaults). For post-install commands: step 2 is the normal path (`env.dockyard` was written by install).
@@ -89,13 +89,14 @@ Each rule uses `-i $BRIDGE` or `-o $BRIDGE` so instances can never interfere wit
 
 ```
 ${DOCKYARD_ROOT}/
-├── env.dockyard             # Resolved env (written by install)
 ├── docker.sock              # Docker API socket
 ├── docker/                  # Docker data (images, containers, volumes)
 │   └── containerd/          # Containerd content store
 └── docker-runtime/
     ├── bin/                 # dockerd, containerd, sysbox-runc, etc.
-    ├── etc/daemon.json      # Docker daemon config
+    ├── etc/
+    │   ├── daemon.json      # Docker daemon config
+    │   └── env.dockyard     # Resolved env (written by install)
     ├── log/                 # containerd.log, dockerd.log
     └── run/                 # containerd.pid
 

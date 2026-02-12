@@ -66,7 +66,7 @@ sudo ./dockyard.sh start                                   # Start manually (no 
 sudo ./dockyard.sh stop                                    # Stop manually (no systemd)
 ```
 
-All commands auto-load `$DOCKYARD_ROOT/env.dockyard` (written by install). Use `DOCKYARD_ENV` to point at a custom env file.
+All commands auto-load `$DOCKYARD_ROOT/docker-runtime/etc/env.dockyard` (written by install). Use `DOCKYARD_ENV` to point at a custom env file.
 
 ## What Gets Installed
 
@@ -138,7 +138,7 @@ export DOCKER_HOST=unix:///dockyard/docker.sock
 sudo ./dockyard.sh uninstall
 
 # For a non-default instance
-DOCKYARD_ENV=/docker2/env.dockyard sudo -E ./dockyard.sh uninstall
+DOCKYARD_ENV=/docker2/docker-runtime/etc/env.dockyard sudo -E ./dockyard.sh uninstall
 ```
 
 This stops the daemon, disables the systemd service, and removes all data including images and containers.

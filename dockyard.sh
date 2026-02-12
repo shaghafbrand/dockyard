@@ -13,9 +13,9 @@ load_env() {
         fi
         echo "Loading ${DOCKYARD_ENV}..."
         set -a; source "$DOCKYARD_ENV"; set +a
-    elif [ -f "${DOCKYARD_ROOT:-/dockyard}/env.dockyard" ]; then
-        echo "Loading ${DOCKYARD_ROOT:-/dockyard}/env.dockyard..."
-        set -a; source "${DOCKYARD_ROOT:-/dockyard}/env.dockyard"; set +a
+    elif [ -f "${DOCKYARD_ROOT:-/dockyard}/docker-runtime/etc/env.dockyard" ]; then
+        echo "Loading ${DOCKYARD_ROOT:-/dockyard}/docker-runtime/etc/env.dockyard..."
+        set -a; source "${DOCKYARD_ROOT:-/dockyard}/docker-runtime/etc/env.dockyard"; set +a
     fi
 }
 
@@ -236,7 +236,7 @@ DAEMONJSONEOF
     echo "Installed config to ${ETC_DIR}/daemon.json"
 
     # Write env.dockyard (resolved values for post-install commands)
-    cat > "${DOCKYARD_ROOT}/env.dockyard" <<ENVEOF
+    cat > "${ETC_DIR}/env.dockyard" <<ENVEOF
 DOCKYARD_ROOT=${DOCKYARD_ROOT}
 DOCKYARD_DOCKER_PREFIX=${DOCKYARD_DOCKER_PREFIX}
 DOCKYARD_BRIDGE_CIDR=${DOCKYARD_BRIDGE_CIDR}
@@ -244,7 +244,7 @@ DOCKYARD_FIXED_CIDR=${DOCKYARD_FIXED_CIDR}
 DOCKYARD_POOL_BASE=${DOCKYARD_POOL_BASE}
 DOCKYARD_POOL_SIZE=${DOCKYARD_POOL_SIZE}
 ENVEOF
-    echo "Installed env to ${DOCKYARD_ROOT}/env.dockyard"
+    echo "Installed env to ${ETC_DIR}/env.dockyard"
 
     # --- 2. Install systemd service ---
     if [ "$INSTALL_SYSTEMD" = true ]; then
@@ -621,8 +621,8 @@ cmd_uninstall() {
     fi
 
     # --- 6. Remove env file ---
-    rm -f "${DOCKYARD_ROOT}/env.dockyard"
-    echo "Removed ${DOCKYARD_ROOT}/env.dockyard"
+    rm -f "${ETC_DIR}/env.dockyard"
+    echo "Removed ${ETC_DIR}/env.dockyard"
 
     echo ""
     echo "=== Uninstall complete ==="
@@ -645,7 +645,7 @@ Environment:
   DOCKYARD_ENV    Path to env file (e.g. DOCKYARD_ENV=./env.thies)
   DOCKYARD_ROOT   Installation root (default: /dockyard)
 
-Post-install commands auto-load $DOCKYARD_ROOT/env.dockyard.
+Post-install commands auto-load $DOCKYARD_ROOT/docker-runtime/etc/env.dockyard.
 
 Examples:
   sudo ./dockyard.sh install
