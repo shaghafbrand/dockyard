@@ -344,13 +344,10 @@ cmd_create() {
     echo "Extracting sysbox from .deb..."
     local SYSBOX_EXTRACT="${CACHE_DIR}/sysbox-extract"
     mkdir -p "$SYSBOX_EXTRACT"
-    cd "$SYSBOX_EXTRACT"
-    ar x "${CACHE_DIR}/${SYSBOX_DEB}"
-    tar -xzf data.tar.* 2>/dev/null || tar -xf data.tar.* 2>/dev/null
-    cp -f usr/bin/sysbox-runc "$BIN_DIR/"
-    cp -f usr/bin/sysbox-mgr "$BIN_DIR/"
-    cp -f usr/bin/sysbox-fs "$BIN_DIR/"
-    cd "$SCRIPT_DIR"
+    dpkg-deb -x "${CACHE_DIR}/${SYSBOX_DEB}" "$SYSBOX_EXTRACT"
+    cp -f "$SYSBOX_EXTRACT/usr/bin/sysbox-runc" "$BIN_DIR/"
+    cp -f "$SYSBOX_EXTRACT/usr/bin/sysbox-mgr" "$BIN_DIR/"
+    cp -f "$SYSBOX_EXTRACT/usr/bin/sysbox-fs" "$BIN_DIR/"
 
     chmod +x "$BIN_DIR"/*
     echo "Installed binaries to ${BIN_DIR}/"

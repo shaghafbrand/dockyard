@@ -138,7 +138,7 @@ export DOCKER_HOST=unix:///dockyard/docker.sock
 
 - Linux with systemd
 - sysbox installed and running (`sysbox-fs.service`, `sysbox-mgr.service`)
-- `curl`, `tar`, `ar` for binary downloads
+- `curl`, `tar`, `dpkg-deb` for binary downloads
 - Root access for installation
 
 ## Destroy
