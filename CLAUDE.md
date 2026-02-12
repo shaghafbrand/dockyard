@@ -44,7 +44,8 @@ All commands except `gen-env` require a config file (mandatory, no silent fallba
 
 1. If `DOCKYARD_ENV` is set → source that file (error if missing)
 2. Else if `./dockyard.env` exists in current directory → source it
-3. Otherwise → error: `"No config found. Run './dockyard.sh gen-env' or set DOCKYARD_ENV."`
+3. Else if `$DOCKYARD_ROOT/docker-runtime/etc/dockyard.env` exists → source it (installed copy)
+4. Otherwise → error: `"No config found. Run './dockyard.sh gen-env' or set DOCKYARD_ENV."`
 
 The `gen-env` command creates the config file. It does not go through `load_env()`.
 

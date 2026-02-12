@@ -8,6 +8,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOADED_ENV_FILE=""
 
 load_env() {
+    local installed_env="${DOCKYARD_ROOT:-/dockyard}/docker-runtime/etc/dockyard.env"
+
     if [ -n "${DOCKYARD_ENV:-}" ]; then
         if [ ! -f "$DOCKYARD_ENV" ]; then
             echo "Error: DOCKYARD_ENV file not found: ${DOCKYARD_ENV}" >&2
@@ -16,6 +18,8 @@ load_env() {
         LOADED_ENV_FILE="$(cd "$(dirname "$DOCKYARD_ENV")" && pwd)/$(basename "$DOCKYARD_ENV")"
     elif [ -f "./dockyard.env" ]; then
         LOADED_ENV_FILE="$(pwd)/dockyard.env"
+    elif [ -f "$installed_env" ]; then
+        LOADED_ENV_FILE="$installed_env"
     else
         echo "Error: No config found." >&2
         echo "Run './dockyard.sh gen-env' to generate one, or set DOCKYARD_ENV." >&2
@@ -769,6 +773,7 @@ Commands:
 All commands except gen-env require a config file:
   1. $DOCKYARD_ENV (if set)
   2. ./dockyard.env (in current directory)
+  3. $DOCKYARD_ROOT/docker-runtime/etc/dockyard.env (installed copy)
 
 Examples:
   ./dockyard.sh gen-env

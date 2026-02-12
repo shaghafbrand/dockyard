@@ -74,6 +74,7 @@ sudo ./dockyard.sh stop                                       # Stop manually (n
 All commands except `gen-env` require a config file. Lookup order:
 1. `$DOCKYARD_ENV` if set → use that file
 2. `./dockyard.env` in current directory
+3. `$DOCKYARD_ROOT/docker-runtime/etc/dockyard.env` (installed copy)
 
 ## What Gets Installed
 
