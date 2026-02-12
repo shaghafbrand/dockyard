@@ -362,7 +362,8 @@ cmd_create() {
     mv -f "${BIN_DIR}/docker" "${BIN_DIR}/docker-cli"
     cat > "${BIN_DIR}/docker" <<DOCKEREOF
 #!/bin/bash
-exec DOCKER_HOST="unix://${DOCKER_SOCKET}" "\$(dirname "\$0")/docker-cli" "\$@"
+export DOCKER_HOST="unix://${DOCKER_SOCKET}"
+exec "\$(dirname "\$0")/docker-cli" "\$@"
 DOCKEREOF
     chmod +x "${BIN_DIR}/docker"
 
