@@ -44,8 +44,9 @@ All commands except `gen-env` require a config file (mandatory, no silent fallba
 
 1. If `DOCKYARD_ENV` is set → source that file (error if missing)
 2. Else if `./dockyard.env` exists in current directory → source it
-3. Else if `$DOCKYARD_ROOT/docker-runtime/etc/dockyard.env` exists → source it (installed copy)
-4. Otherwise → error: `"No config found. Run './dockyard.sh gen-env' or set DOCKYARD_ENV."`
+3. Else if `../etc/dockyard.env` exists relative to the script → source it (installed copy at `$BIN_DIR/dockyard.sh` finds `$ETC_DIR/dockyard.env`)
+4. Else if `$DOCKYARD_ROOT/docker-runtime/etc/dockyard.env` exists → source it
+5. Otherwise → error: `"No config found. Run './dockyard.sh gen-env' or set DOCKYARD_ENV."`
 
 The `gen-env` command creates the config file. It does not go through `load_env()`.
 
@@ -115,7 +116,7 @@ ${DOCKYARD_ROOT}/
 ├── docker/                  # Docker data (images, containers, volumes)
 │   └── containerd/          # Containerd content store
 └── docker-runtime/
-    ├── bin/                 # dockerd, containerd, sysbox-runc, etc.
+    ├── bin/                 # dockerd, containerd, sysbox-runc, dockyard.sh, etc.
     ├── etc/
     │   ├── daemon.json      # Docker daemon config
     │   └── dockyard.env     # Copy of config (written by create)

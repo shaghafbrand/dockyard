@@ -8,7 +8,8 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 LOADED_ENV_FILE=""
 
 load_env() {
-    local installed_env="${DOCKYARD_ROOT:-/dockyard}/docker-runtime/etc/dockyard.env"
+    local script_env="${SCRIPT_DIR}/../etc/dockyard.env"
+    local root_env="${DOCKYARD_ROOT:-/dockyard}/docker-runtime/etc/dockyard.env"
 
     if [ -n "${DOCKYARD_ENV:-}" ]; then
         if [ ! -f "$DOCKYARD_ENV" ]; then
@@ -18,8 +19,10 @@ load_env() {
         LOADED_ENV_FILE="$(cd "$(dirname "$DOCKYARD_ENV")" && pwd)/$(basename "$DOCKYARD_ENV")"
     elif [ -f "./dockyard.env" ]; then
         LOADED_ENV_FILE="$(pwd)/dockyard.env"
-    elif [ -f "$installed_env" ]; then
-        LOADED_ENV_FILE="$installed_env"
+    elif [ -f "$script_env" ]; then
+        LOADED_ENV_FILE="$(cd "$(dirname "$script_env")" && pwd)/$(basename "$script_env")"
+    elif [ -f "$root_env" ]; then
+        LOADED_ENV_FILE="$root_env"
     else
         echo "Error: No config found." >&2
         echo "Run './dockyard.sh gen-env' to generate one, or set DOCKYARD_ENV." >&2
@@ -370,9 +373,12 @@ cmd_create() {
 DAEMONJSONEOF
     echo "Installed config to ${ETC_DIR}/daemon.json"
 
-    # Copy config file into created instance for reference
+    # Copy config file and dockyard.sh into instance
     cp "$LOADED_ENV_FILE" "${ETC_DIR}/dockyard.env"
+    cp "${SCRIPT_DIR}/dockyard.sh" "${BIN_DIR}/dockyard.sh"
+    chmod +x "${BIN_DIR}/dockyard.sh"
     echo "Installed env to ${ETC_DIR}/dockyard.env"
+    echo "Installed dockyard.sh to ${BIN_DIR}/dockyard.sh"
 
     # --- 2. Install systemd service ---
     if [ "$INSTALL_SYSTEMD" = true ]; then
@@ -464,6 +470,10 @@ SERVICEEOF
     echo ""
     echo "To use:"
     echo "  DOCKER_HOST=\"unix://${DOCKER_SOCKET}\" docker run -ti alpine ash"
+    echo ""
+    echo "Manage this instance with the installed copy:"
+    echo "  sudo ${BIN_DIR}/dockyard.sh status"
+    echo "  sudo ${BIN_DIR}/dockyard.sh destroy"
     if [ "$INSTALL_SYSTEMD" = true ]; then
         echo ""
         echo "  sudo systemctl status ${SERVICE_NAME}   # check status"
@@ -773,7 +783,8 @@ Commands:
 All commands except gen-env require a config file:
   1. $DOCKYARD_ENV (if set)
   2. ./dockyard.env (in current directory)
-  3. $DOCKYARD_ROOT/docker-runtime/etc/dockyard.env (installed copy)
+  3. ../etc/dockyard.env (relative to script — for installed copy)
+  4. $DOCKYARD_ROOT/docker-runtime/etc/dockyard.env
 
 Examples:
   ./dockyard.sh gen-env

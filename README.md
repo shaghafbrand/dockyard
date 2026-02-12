@@ -74,7 +74,8 @@ sudo ./dockyard.sh stop                                       # Stop manually (n
 All commands except `gen-env` require a config file. Lookup order:
 1. `$DOCKYARD_ENV` if set → use that file
 2. `./dockyard.env` in current directory
-3. `$DOCKYARD_ROOT/docker-runtime/etc/dockyard.env` (installed copy)
+3. `../etc/dockyard.env` relative to the script (for the installed copy)
+4. `$DOCKYARD_ROOT/docker-runtime/etc/dockyard.env`
 
 ## What Gets Installed
 
@@ -92,7 +93,7 @@ ${DOCKYARD_ROOT}/
 ├── docker/                         # Images, containers, volumes
 │   └── containerd/
 └── docker-runtime/
-    ├── bin/                        # dockerd, containerd, sysbox-runc (static binaries)
+    ├── bin/                        # dockerd, containerd, sysbox-runc, dockyard.sh
     ├── etc/
     │   ├── daemon.json             # Daemon configuration
     │   └── dockyard.env            # Copy of config (written by create)
