@@ -9,21 +9,22 @@ Dockyard: multi-instance Docker daemon installer with sysbox-runc as default run
 ## Key Commands
 
 ```bash
-# Install with baked-in defaults
+# Generate a config with randomized networks
+./dockyard.sh gen-env
+DOCKYARD_DOCKER_PREFIX=test_ DOCKYARD_ROOT=/test ./dockyard.sh gen-env
+
+# Install (requires dockyard.env)
 sudo ./dockyard.sh install
 sudo ./dockyard.sh install --no-systemd --no-start
 
-# Install with custom env
-DOCKYARD_ENV=./env.thies sudo -E ./dockyard.sh install
+# Install with explicit env file
+DOCKYARD_ENV=./custom.env sudo -E ./dockyard.sh install
 
-# Post-install (reads $DOCKYARD_ROOT/docker-runtime/etc/env.dockyard automatically)
+# Post-install (reads ./dockyard.env or $DOCKYARD_ENV)
 sudo ./dockyard.sh start
 sudo ./dockyard.sh stop
 ./dockyard.sh status
 sudo ./dockyard.sh uninstall
-
-# Any command with explicit env file
-DOCKYARD_ENV=/path/to/env.dockyard sudo -E ./dockyard.sh status
 ```
 
 Using a custom instance:
@@ -35,17 +36,17 @@ DOCKER_HOST=unix:///dockyard/docker.sock docker ps
 
 ### Single Script, Subcommand Interface
 
-Everything lives in `dockyard.sh` with subcommands: `install`, `start`, `stop`, `status`, `uninstall`. The script is fully self-contained: baked-in defaults, embedded daemon.json, no external file dependencies.
+Everything lives in `dockyard.sh` with subcommands: `gen-env`, `install`, `start`, `stop`, `status`, `uninstall`. The script is fully self-contained: embedded daemon.json, no external file dependencies.
 
 ### Environment Loading
 
-Unified env loading for all commands:
+All commands except `gen-env` require a config file (mandatory, no silent fallback):
 
-1. If `DOCKYARD_ENV` is set → source that file
-2. Else if `$DOCKYARD_ROOT/docker-runtime/etc/env.dockyard` exists → source it
-3. Otherwise → baked-in defaults apply via `derive_vars()`
+1. If `DOCKYARD_ENV` is set → source that file (error if missing)
+2. Else if `./dockyard.env` exists in current directory → source it
+3. Otherwise → error: `"No config found. Run './dockyard.sh gen-env' or set DOCKYARD_ENV."`
 
-For install: step 3 is fine (defaults). For post-install commands: step 2 is the normal path (`env.dockyard` was written by install).
+The `gen-env` command creates the config file. It does not go through `load_env()`.
 
 ### Environment Variables
 
@@ -55,12 +56,32 @@ Each env file defines 6 variables that fully configure an instance:
 |----------|---------|----------------------------|
 | `DOCKYARD_ROOT` | Base directory for data/runtime/socket | Yes |
 | `DOCKYARD_DOCKER_PREFIX` | Prefix for bridge, service name, exec-root | Yes |
-| `DOCKYARD_BRIDGE_CIDR` | Bridge IP/mask (e.g. `172.30.0.1/24`) | Yes |
-| `DOCKYARD_FIXED_CIDR` | Container subnet (e.g. `172.30.0.0/24`) | Yes |
+| `DOCKYARD_BRIDGE_CIDR` | Bridge IP/mask (e.g. `172.22.147.1/24`) | Yes |
+| `DOCKYARD_FIXED_CIDR` | Container subnet (e.g. `172.22.147.0/24`) | Yes |
 | `DOCKYARD_POOL_BASE` | Address pool for user networks | Yes |
 | `DOCKYARD_POOL_SIZE` | Pool subnet size in CIDR bits | No |
 
 Everything else is derived: `RUNTIME_DIR`, `BRIDGE`, `EXEC_ROOT`, `SERVICE_NAME`, `DOCKER_SOCKET`, `CONTAINERD_SOCKET`.
+
+### gen-env: Config Generation
+
+`gen-env` generates a `dockyard.env` file with conflict-free randomized networks:
+
+- Picks random /24 from `172.16.0.0/12` for bridge CIDR
+- Picks random /16 from `172.16.0.0/12` (different second octet) for pool base
+- Validates against `ip route`, retries up to 10 times on collision
+- Checks prefix conflicts (bridge, exec-root, systemd service)
+- Checks root dir conflicts (existing installation)
+- All checks skippable with `--nocheck`
+- All 6 variables overridable via environment
+
+### Collision Checks (Shared Helpers)
+
+Three reusable helpers used by both `gen-env` and `install`:
+
+- `check_prefix_conflict()` — bridge exists, exec-root dir exists, systemd service exists
+- `check_root_conflict()` — `docker-runtime/bin/` already present
+- `check_subnet_conflict()` — `ip route` overlap for fixed CIDR and pool base
 
 ### Downloaded Software
 
@@ -96,7 +117,7 @@ ${DOCKYARD_ROOT}/
     ├── bin/                 # dockerd, containerd, sysbox-runc, etc.
     ├── etc/
     │   ├── daemon.json      # Docker daemon config
-    │   └── env.dockyard     # Resolved env (written by install)
+    │   └── dockyard.env     # Copy of config (written by install)
     ├── log/                 # containerd.log, dockerd.log
     └── run/                 # containerd.pid
 

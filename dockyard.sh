@@ -6,17 +6,24 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # ── Env loading ──────────────────────────────────────────────
 
 load_env() {
+    local env_file=""
+
     if [ -n "${DOCKYARD_ENV:-}" ]; then
         if [ ! -f "$DOCKYARD_ENV" ]; then
             echo "Error: DOCKYARD_ENV file not found: ${DOCKYARD_ENV}" >&2
             exit 1
         fi
-        echo "Loading ${DOCKYARD_ENV}..."
-        set -a; source "$DOCKYARD_ENV"; set +a
-    elif [ -f "${DOCKYARD_ROOT:-/dockyard}/docker-runtime/etc/env.dockyard" ]; then
-        echo "Loading ${DOCKYARD_ROOT:-/dockyard}/docker-runtime/etc/env.dockyard..."
-        set -a; source "${DOCKYARD_ROOT:-/dockyard}/docker-runtime/etc/env.dockyard"; set +a
+        env_file="$DOCKYARD_ENV"
+    elif [ -f "./dockyard.env" ]; then
+        env_file="./dockyard.env"
+    else
+        echo "Error: No config found." >&2
+        echo "Run './dockyard.sh gen-env' to generate one, or set DOCKYARD_ENV." >&2
+        exit 1
     fi
+
+    echo "Loading ${env_file}..."
+    set -a; source "$env_file"; set +a
 }
 
 derive_vars() {
@@ -102,7 +109,161 @@ wait_for_file() {
     done
 }
 
+# ── Collision checks ─────────────────────────────────────────
+
+check_prefix_conflict() {
+    local prefix="${1:-$DOCKYARD_DOCKER_PREFIX}"
+    local bridge="${prefix}docker0"
+    local exec_root="/run/${prefix}docker"
+    local service="${prefix}docker.service"
+
+    if ip link show "$bridge" &>/dev/null; then
+        echo "Error: Bridge ${bridge} already exists — DOCKYARD_DOCKER_PREFIX=${prefix} is in use." >&2
+        echo "Use: DOCKYARD_DOCKER_PREFIX=myprefix_ ./dockyard.sh gen-env" >&2
+        return 1
+    fi
+    if [ -d "$exec_root" ]; then
+        echo "Error: ${exec_root} already exists — DOCKYARD_DOCKER_PREFIX=${prefix} is in use." >&2
+        echo "Use: DOCKYARD_DOCKER_PREFIX=myprefix_ ./dockyard.sh gen-env" >&2
+        return 1
+    fi
+    if systemctl list-unit-files "$service" &>/dev/null 2>&1 && systemctl cat "$service" &>/dev/null 2>&1; then
+        echo "Error: Systemd service ${service} already exists — DOCKYARD_DOCKER_PREFIX=${prefix} is in use." >&2
+        echo "Use: DOCKYARD_DOCKER_PREFIX=myprefix_ ./dockyard.sh gen-env" >&2
+        return 1
+    fi
+    return 0
+}
+
+check_root_conflict() {
+    local root="${1:-$DOCKYARD_ROOT}"
+    if [ -d "${root}/docker-runtime/bin" ]; then
+        echo "Error: ${root}/docker-runtime/bin/ already exists — dockyard is already installed at this root." >&2
+        echo "Use: DOCKYARD_ROOT=/other/path ./dockyard.sh gen-env" >&2
+        return 1
+    fi
+    return 0
+}
+
+check_subnet_conflict() {
+    local fixed_cidr="$1"
+    local pool_base="$2"
+
+    local fixed_net="${fixed_cidr%/*}"
+    if ip route | grep -qF "${fixed_net}/"; then
+        echo "Error: DOCKYARD_FIXED_CIDR ${fixed_cidr} conflicts with an existing route:" >&2
+        echo "  $(ip route | grep -F "${fixed_net}/")" >&2
+        return 1
+    fi
+
+    local pool_net="${pool_base%/*}"
+    local pool_two_octets="${pool_net%.*.*}"
+    if ip route | grep -qE "^${pool_two_octets}\."; then
+        echo "Error: DOCKYARD_POOL_BASE ${pool_base} overlaps with existing routes:" >&2
+        echo "  $(ip route | grep -E "^${pool_two_octets}\.")" >&2
+        return 1
+    fi
+    return 0
+}
+
 # ── Commands ─────────────────────────────────────────────────
+
+cmd_gen_env() {
+    local NOCHECK=false
+    for arg in "$@"; do
+        case "$arg" in
+            --nocheck)  NOCHECK=true ;;
+            -h|--help)  gen_env_usage ;;
+            --*)        echo "Unknown option: $arg" >&2; gen_env_usage ;;
+        esac
+    done
+
+    # Determine output file
+    local out_file="${DOCKYARD_ENV:-./dockyard.env}"
+    if [ -f "$out_file" ]; then
+        echo "Error: ${out_file} already exists. Remove it first or set DOCKYARD_ENV to a different path." >&2
+        exit 1
+    fi
+
+    # Apply env var overrides or defaults
+    local root="${DOCKYARD_ROOT:-/dockyard}"
+    local prefix="${DOCKYARD_DOCKER_PREFIX:-dy_}"
+    local pool_size="${DOCKYARD_POOL_SIZE:-24}"
+
+    # Generate random networks if not provided via env
+    local bridge_cidr="${DOCKYARD_BRIDGE_CIDR:-}"
+    local fixed_cidr="${DOCKYARD_FIXED_CIDR:-}"
+    local pool_base="${DOCKYARD_POOL_BASE:-}"
+
+    if [ -z "$bridge_cidr" ] || [ -z "$fixed_cidr" ] || [ -z "$pool_base" ]; then
+        local attempts=0
+        local max_attempts=10
+
+        while [ $attempts -lt $max_attempts ]; do
+            attempts=$((attempts + 1))
+
+            # Random /24 from 172.16.0.0/12 for bridge
+            local b2=$(( RANDOM % 16 + 16 ))   # 16-31
+            local b3=$(( RANDOM % 256 ))        # 0-255
+            bridge_cidr="${DOCKYARD_BRIDGE_CIDR:-172.${b2}.${b3}.1/24}"
+            fixed_cidr="${DOCKYARD_FIXED_CIDR:-172.${b2}.${b3}.0/24}"
+
+            # Random /16 from 172.16.0.0/12 for pool (different second octet)
+            local p2=$(( RANDOM % 16 + 16 ))    # 16-31
+            while [ "$p2" -eq "$b2" ]; do
+                p2=$(( RANDOM % 16 + 16 ))
+            done
+            pool_base="${DOCKYARD_POOL_BASE:-172.${p2}.0.0/16}"
+
+            if [ "$NOCHECK" = true ]; then
+                break
+            fi
+
+            if check_subnet_conflict "$fixed_cidr" "$pool_base" 2>/dev/null; then
+                break
+            fi
+
+            # Reset for next attempt (only re-randomize what wasn't user-provided)
+            [ -n "${DOCKYARD_BRIDGE_CIDR:-}" ] || bridge_cidr=""
+            [ -n "${DOCKYARD_FIXED_CIDR:-}" ] || fixed_cidr=""
+            [ -n "${DOCKYARD_POOL_BASE:-}" ] || pool_base=""
+
+            if [ $attempts -eq $max_attempts ]; then
+                echo "Error: Could not find non-conflicting subnets after ${max_attempts} attempts." >&2
+                echo "Provide explicit values via DOCKYARD_BRIDGE_CIDR, DOCKYARD_FIXED_CIDR, DOCKYARD_POOL_BASE." >&2
+                exit 1
+            fi
+        done
+    else
+        # All three provided explicitly — validate unless --nocheck
+        if [ "$NOCHECK" = false ]; then
+            check_subnet_conflict "$fixed_cidr" "$pool_base" || exit 1
+        fi
+    fi
+
+    # Conflict checks (unless --nocheck)
+    if [ "$NOCHECK" = false ]; then
+        check_prefix_conflict "$prefix" || exit 1
+        check_root_conflict "$root" || exit 1
+    fi
+
+    # Write config file
+    cat > "$out_file" <<EOF
+# Dockyard configuration
+# Generated by: dockyard.sh gen-env
+
+DOCKYARD_ROOT=${root}
+DOCKYARD_DOCKER_PREFIX=${prefix}
+DOCKYARD_BRIDGE_CIDR=${bridge_cidr}
+DOCKYARD_FIXED_CIDR=${fixed_cidr}
+DOCKYARD_POOL_BASE=${pool_base}
+DOCKYARD_POOL_SIZE=${pool_size}
+EOF
+
+    echo "Generated ${out_file}:"
+    echo ""
+    cat "$out_file"
+}
 
 cmd_install() {
     local INSTALL_SYSTEMD=true
@@ -135,36 +296,9 @@ cmd_install() {
     echo ""
 
     # --- Check for existing installation ---
-    if [ -d "${BIN_DIR}" ]; then
-        echo "Error: ${BIN_DIR} already exists — docker is already installed in this DOCKYARD_ROOT" >&2
-        exit 1
-    fi
-
-    if ip link show "$BRIDGE" &>/dev/null; then
-        echo "Error: bridge ${BRIDGE} already exists — a docker with this DOCKYARD_DOCKER_PREFIX is running" >&2
-        exit 1
-    fi
-
-    if [ -d "$EXEC_ROOT" ]; then
-        echo "Error: ${EXEC_ROOT} already exists — a docker with this DOCKYARD_DOCKER_PREFIX is running" >&2
-        exit 1
-    fi
-
-    # Check for subnet collisions
-    local FIXED_NET="${DOCKYARD_FIXED_CIDR%/*}"
-    if ip route | grep -qF "${FIXED_NET}/"; then
-        echo "Error: DOCKYARD_FIXED_CIDR ${DOCKYARD_FIXED_CIDR} conflicts with an existing route:" >&2
-        echo "  $(ip route | grep -F "${FIXED_NET}/")" >&2
-        exit 1
-    fi
-
-    local POOL_NET="${DOCKYARD_POOL_BASE%/*}"
-    local POOL_TWO_OCTETS="${POOL_NET%.*.*}"
-    if ip route | grep -qE "^${POOL_TWO_OCTETS}\."; then
-        echo "Error: DOCKYARD_POOL_BASE ${DOCKYARD_POOL_BASE} overlaps with existing routes:" >&2
-        echo "  $(ip route | grep -E "^${POOL_TWO_OCTETS}\.")" >&2
-        exit 1
-    fi
+    check_root_conflict "$DOCKYARD_ROOT" || exit 1
+    check_prefix_conflict "$DOCKYARD_DOCKER_PREFIX" || exit 1
+    check_subnet_conflict "$DOCKYARD_FIXED_CIDR" "$DOCKYARD_POOL_BASE" || exit 1
 
     # --- 1. Download and extract binaries ---
     local CACHE_DIR="${SCRIPT_DIR}/.tmp"
@@ -235,16 +369,10 @@ cmd_install() {
 DAEMONJSONEOF
     echo "Installed config to ${ETC_DIR}/daemon.json"
 
-    # Write env.dockyard (resolved values for post-install commands)
-    cat > "${ETC_DIR}/env.dockyard" <<ENVEOF
-DOCKYARD_ROOT=${DOCKYARD_ROOT}
-DOCKYARD_DOCKER_PREFIX=${DOCKYARD_DOCKER_PREFIX}
-DOCKYARD_BRIDGE_CIDR=${DOCKYARD_BRIDGE_CIDR}
-DOCKYARD_FIXED_CIDR=${DOCKYARD_FIXED_CIDR}
-DOCKYARD_POOL_BASE=${DOCKYARD_POOL_BASE}
-DOCKYARD_POOL_SIZE=${DOCKYARD_POOL_SIZE}
-ENVEOF
-    echo "Installed env to ${ETC_DIR}/env.dockyard"
+    # Copy config file into install dir for reference
+    local src_env="${DOCKYARD_ENV:-./dockyard.env}"
+    cp "$src_env" "${ETC_DIR}/dockyard.env"
+    echo "Installed env to ${ETC_DIR}/dockyard.env"
 
     # --- 2. Install systemd service ---
     if [ "$INSTALL_SYSTEMD" = true ]; then
@@ -621,8 +749,8 @@ cmd_uninstall() {
     fi
 
     # --- 6. Remove env file ---
-    rm -f "${ETC_DIR}/env.dockyard"
-    echo "Removed ${ETC_DIR}/env.dockyard"
+    rm -f "${ETC_DIR}/dockyard.env"
+    echo "Removed ${ETC_DIR}/dockyard.env"
 
     echo ""
     echo "=== Uninstall complete ==="
@@ -635,26 +763,58 @@ usage() {
 Usage: ./dockyard.sh <command> [options]
 
 Commands:
+  gen-env     Generate a conflict-free dockyard.env config file
   install     Download binaries, install config, set up systemd, start daemon
   start       Start daemons manually (without systemd)
   stop        Stop manually started daemons
   status      Show instance status
   uninstall   Stop and remove everything
 
-Environment:
-  DOCKYARD_ENV    Path to env file (e.g. DOCKYARD_ENV=./env.thies)
-  DOCKYARD_ROOT   Installation root (default: /dockyard)
-
-Post-install commands auto-load $DOCKYARD_ROOT/docker-runtime/etc/env.dockyard.
+All commands except gen-env require a config file:
+  1. $DOCKYARD_ENV (if set)
+  2. ./dockyard.env (in current directory)
 
 Examples:
+  ./dockyard.sh gen-env
   sudo ./dockyard.sh install
-  DOCKYARD_ENV=./env.thies sudo -E ./dockyard.sh install
   sudo ./dockyard.sh install --no-systemd --no-start
   sudo ./dockyard.sh start
   sudo ./dockyard.sh stop
   ./dockyard.sh status
   sudo ./dockyard.sh uninstall
+
+  # Multiple instances
+  DOCKYARD_DOCKER_PREFIX=test_ DOCKYARD_ROOT=/test ./dockyard.sh gen-env
+  DOCKYARD_ENV=./dockyard.env sudo -E ./dockyard.sh install
+EOF
+    exit 0
+}
+
+gen_env_usage() {
+    cat <<'EOF'
+Usage: ./dockyard.sh gen-env [OPTIONS]
+
+Generate a dockyard.env config file with randomized, conflict-free networks.
+
+Options:
+  --nocheck     Skip all conflict checks
+  -h, --help    Show this help
+
+Output: ./dockyard.env (or $DOCKYARD_ENV if set). Errors if file exists.
+
+Override any variable via environment:
+  DOCKYARD_ROOT           Installation root (default: /dockyard)
+  DOCKYARD_DOCKER_PREFIX  Prefix for bridge/service (default: dy_)
+  DOCKYARD_BRIDGE_CIDR    Bridge IP/mask (default: random from 172.16.0.0/12)
+  DOCKYARD_FIXED_CIDR     Container subnet (default: derived from bridge)
+  DOCKYARD_POOL_BASE      Address pool base (default: random from 172.16.0.0/12)
+  DOCKYARD_POOL_SIZE      Pool subnet size (default: 24)
+
+Examples:
+  ./dockyard.sh gen-env
+  DOCKYARD_DOCKER_PREFIX=test_ ./dockyard.sh gen-env
+  DOCKYARD_ROOT=/docker2 DOCKYARD_DOCKER_PREFIX=d2_ ./dockyard.sh gen-env
+  ./dockyard.sh gen-env --nocheck
 EOF
     exit 0
 }
@@ -666,18 +826,17 @@ Usage: sudo ./dockyard.sh install [OPTIONS]
 Install dockyard docker: download binaries, install config,
 set up systemd service, and start the daemon.
 
+Requires a dockyard.env config file (run gen-env first).
+
 Options:
   --no-systemd    Skip systemd service installation
   --no-start      Don't start the daemon after install
   -h, --help      Show this help
 
-Environment:
-  DOCKYARD_ENV    Path to env file with custom settings
-
 Examples:
-  sudo ./dockyard.sh install
-  DOCKYARD_ENV=./env.thies sudo -E ./dockyard.sh install
+  ./dockyard.sh gen-env && sudo ./dockyard.sh install
   sudo ./dockyard.sh install --no-systemd --no-start
+  DOCKYARD_ENV=./custom.env sudo -E ./dockyard.sh install
 EOF
     exit 0
 }
@@ -688,6 +847,9 @@ COMMAND="${1:-}"
 shift || true
 
 case "$COMMAND" in
+    gen-env)
+        cmd_gen_env "$@"
+        ;;
     install)
         load_env
         derive_vars
