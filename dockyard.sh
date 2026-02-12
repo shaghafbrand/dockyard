@@ -357,6 +357,15 @@ cmd_create() {
     cp -f "$SYSBOX_EXTRACT/usr/bin/sysbox-fs" "$BIN_DIR/"
 
     chmod +x "$BIN_DIR"/*
+
+    # Rename docker CLI binary, replace with DOCKER_HOST wrapper
+    mv -f "${BIN_DIR}/docker" "${BIN_DIR}/docker-cli"
+    cat > "${BIN_DIR}/docker" <<DOCKEREOF
+#!/bin/bash
+exec DOCKER_HOST="unix://${DOCKER_SOCKET}" "\$(dirname "\$0")/docker-cli" "\$@"
+DOCKEREOF
+    chmod +x "${BIN_DIR}/docker"
+
     echo "Installed binaries to ${BIN_DIR}/"
 
     # Write daemon.json (embedded — no external file dependency)
@@ -373,12 +382,12 @@ cmd_create() {
 DAEMONJSONEOF
     echo "Installed config to ${ETC_DIR}/daemon.json"
 
-    # Copy config file and dockyard.sh into instance
+    # Copy config file and dockyardctl into instance
     cp "$LOADED_ENV_FILE" "${ETC_DIR}/dockyard.env"
-    cp "${SCRIPT_DIR}/dockyard.sh" "${BIN_DIR}/dockyard.sh"
-    chmod +x "${BIN_DIR}/dockyard.sh"
+    cp "${SCRIPT_DIR}/dockyard.sh" "${BIN_DIR}/dockyardctl"
+    chmod +x "${BIN_DIR}/dockyardctl"
     echo "Installed env to ${ETC_DIR}/dockyard.env"
-    echo "Installed dockyard.sh to ${BIN_DIR}/dockyard.sh"
+    echo "Installed dockyardctl to ${BIN_DIR}/dockyardctl"
 
     # --- 2. Install systemd service ---
     if [ "$INSTALL_SYSTEMD" = true ]; then
@@ -403,11 +412,11 @@ DAEMONJSONEOF
     echo "=== Installation complete ==="
     echo ""
     echo "To use:"
-    echo "  DOCKER_HOST=\"unix://${DOCKER_SOCKET}\" docker run -ti alpine ash"
+    echo "  ${BIN_DIR}/docker run -ti alpine ash"
     echo ""
-    echo "Manage this instance with the installed copy:"
-    echo "  sudo ${BIN_DIR}/dockyard.sh status"
-    echo "  sudo ${BIN_DIR}/dockyard.sh destroy"
+    echo "Manage this instance:"
+    echo "  ${BIN_DIR}/dockyardctl status"
+    echo "  sudo ${BIN_DIR}/dockyardctl destroy"
 }
 
 cmd_start() {

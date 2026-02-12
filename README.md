@@ -27,7 +27,7 @@ curl -O https://raw.githubusercontent.com/thieso2/dockyard/refs/heads/main/docky
 sudo ./dockyard.sh create
 
 # Run a container (uses sysbox-runc automatically)
-DOCKER_HOST=unix:///dockyard/docker.sock docker run --rm -it alpine ash
+/dockyard/docker-runtime/bin/docker run --rm -it alpine ash
 ```
 
 ## Multiple Instances
@@ -95,7 +95,7 @@ ${DOCKYARD_ROOT}/
 ├── docker/                         # Images, containers, volumes
 │   └── containerd/
 └── docker-runtime/
-    ├── bin/                        # dockerd, containerd, sysbox-runc, dockyard.sh
+    ├── bin/                        # dockerd, containerd, sysbox-runc, dockyardctl, docker wrapper
     ├── etc/
     │   ├── daemon.json             # Daemon configuration
     │   └── dockyard.env            # Copy of config (written by create)
@@ -125,14 +125,14 @@ Every rule is scoped to the instance's bridge name, so instances can never inter
 
 ## Accessing the System Docker
 
-While dockyard instances are running, the system Docker still works normally:
+Each dockyard instance includes a `docker` wrapper that sets the correct `DOCKER_HOST` automatically:
 
 ```bash
-docker -H unix:///run/docker.sock ps        # system docker
-docker -H unix:///dockyard/docker.sock ps  # dockyard instance
+/dockyard/docker-runtime/bin/docker ps      # dockyard instance
+docker ps                                    # system docker (unchanged)
 ```
 
-Or set `DOCKER_HOST` to make a dockyard instance the default:
+Or use `DOCKER_HOST` directly:
 
 ```bash
 export DOCKER_HOST=unix:///dockyard/docker.sock

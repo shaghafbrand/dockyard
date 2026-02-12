@@ -116,7 +116,7 @@ ${DOCKYARD_ROOT}/
 ├── docker/                  # Docker data (images, containers, volumes)
 │   └── containerd/          # Containerd content store
 └── docker-runtime/
-    ├── bin/                 # dockerd, containerd, sysbox-runc, dockyard.sh, etc.
+    ├── bin/                 # dockerd, containerd, sysbox-runc, dockyardctl, docker wrapper, etc.
     ├── etc/
     │   ├── daemon.json      # Docker daemon config
     │   └── dockyard.env     # Copy of config (written by create)
