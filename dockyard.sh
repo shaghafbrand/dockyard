@@ -5,25 +5,25 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # ── Env loading ──────────────────────────────────────────────
 
-load_env() {
-    local env_file=""
+LOADED_ENV_FILE=""
 
+load_env() {
     if [ -n "${DOCKYARD_ENV:-}" ]; then
         if [ ! -f "$DOCKYARD_ENV" ]; then
             echo "Error: DOCKYARD_ENV file not found: ${DOCKYARD_ENV}" >&2
             exit 1
         fi
-        env_file="$DOCKYARD_ENV"
+        LOADED_ENV_FILE="$(cd "$(dirname "$DOCKYARD_ENV")" && pwd)/$(basename "$DOCKYARD_ENV")"
     elif [ -f "./dockyard.env" ]; then
-        env_file="./dockyard.env"
+        LOADED_ENV_FILE="$(pwd)/dockyard.env"
     else
         echo "Error: No config found." >&2
         echo "Run './dockyard.sh gen-env' to generate one, or set DOCKYARD_ENV." >&2
         exit 1
     fi
 
-    echo "Loading ${env_file}..."
-    set -a; source "$env_file"; set +a
+    echo "Loading ${LOADED_ENV_FILE}..."
+    set -a; source "$LOADED_ENV_FILE"; set +a
 }
 
 derive_vars() {
@@ -367,8 +367,7 @@ DAEMONJSONEOF
     echo "Installed config to ${ETC_DIR}/daemon.json"
 
     # Copy config file into created instance for reference
-    local src_env="${DOCKYARD_ENV:-./dockyard.env}"
-    cp "$src_env" "${ETC_DIR}/dockyard.env"
+    cp "$LOADED_ENV_FILE" "${ETC_DIR}/dockyard.env"
     echo "Installed env to ${ETC_DIR}/dockyard.env"
 
     # --- 2. Install systemd service ---
