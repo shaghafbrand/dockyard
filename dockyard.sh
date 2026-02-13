@@ -378,7 +378,8 @@ DOCKEREOF
       "path": "${BIN_DIR}/sysbox-runc"
     }
   },
-  "storage-driver": "overlay2"
+  "storage-driver": "overlay2",
+  "userland-proxy-path": "${BIN_DIR}/docker-proxy"
 }
 DAEMONJSONEOF
     echo "Installed config to ${ETC_DIR}/daemon.json"
