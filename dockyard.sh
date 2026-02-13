@@ -360,7 +360,13 @@ cmd_create() {
     cp -f "$SYSBOX_EXTRACT/usr/bin/sysbox-fs" "$BIN_DIR/"
 
     echo "Installing Docker Compose..."
+    # Install as standalone binary
     cp -f "${CACHE_DIR}/docker-compose-linux-x86_64" "${BIN_DIR}/docker-compose"
+    # Install as Docker CLI plugin
+    local CLI_PLUGINS_DIR="${RUNTIME_DIR}/lib/docker/cli-plugins"
+    mkdir -p "$CLI_PLUGINS_DIR"
+    cp -f "${CACHE_DIR}/docker-compose-linux-x86_64" "${CLI_PLUGINS_DIR}/docker-compose"
+    chmod +x "${CLI_PLUGINS_DIR}/docker-compose"
 
     chmod +x "$BIN_DIR"/*
 
@@ -369,6 +375,7 @@ cmd_create() {
     cat > "${BIN_DIR}/docker" <<DOCKEREOF
 #!/bin/bash
 export DOCKER_HOST="unix://${DOCKER_SOCKET}"
+export DOCKER_CLI_PLUGIN_PATH="${CLI_PLUGINS_DIR}"
 exec "\$(dirname "\$0")/docker-cli" "\$@"
 DOCKEREOF
     chmod +x "${BIN_DIR}/docker"

@@ -121,6 +121,9 @@ ${DOCKYARD_ROOT}/
     ├── etc/
     │   ├── daemon.json      # Docker daemon config
     │   └── dockyard.env     # Copy of config (written by create)
+    ├── lib/
+    │   └── docker/
+    │       └── cli-plugins/ # Docker CLI plugins (docker-compose)
     ├── log/                 # containerd.log, dockerd.log
     └── run/                 # containerd.pid
 
