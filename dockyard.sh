@@ -375,7 +375,7 @@ cmd_create() {
     cat > "${BIN_DIR}/docker" <<DOCKEREOF
 #!/bin/bash
 export DOCKER_HOST="unix://${DOCKER_SOCKET}"
-export DOCKER_CLI_PLUGIN_PATH="${CLI_PLUGINS_DIR}"
+export DOCKER_CONFIG="${RUNTIME_DIR}/lib/docker"
 exec "\$(dirname "\$0")/docker-cli" "\$@"
 DOCKEREOF
     chmod +x "${BIN_DIR}/docker"
