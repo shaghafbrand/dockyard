@@ -93,6 +93,7 @@ Defined in `cmd_create()`, cached in `.tmp/`:
 |----------|---------|--------|
 | Docker CE (static) | 29.2.1 | download.docker.com |
 | Docker Rootless Extras | 29.2.1 | download.docker.com |
+| Docker Compose | 2.32.4 | github.com/docker/compose |
 | Sysbox CE (.deb) | 0.6.7 | downloads.nestybox.com |
 
 ### Self-Contained Systemd Services

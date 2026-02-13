@@ -312,11 +312,13 @@ cmd_create() {
 
     local DOCKER_VERSION="29.2.1"
     local DOCKER_ROOTLESS_VERSION="29.2.1"
+    local DOCKER_COMPOSE_VERSION="2.32.4"
     local SYSBOX_VERSION="0.6.7"
     local SYSBOX_DEB="sysbox-ce_${SYSBOX_VERSION}-0.linux_amd64.deb"
 
     local DOCKER_URL="https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_VERSION}.tgz"
     local DOCKER_ROOTLESS_URL="https://download.docker.com/linux/static/stable/x86_64/docker-rootless-extras-${DOCKER_ROOTLESS_VERSION}.tgz"
+    local DOCKER_COMPOSE_URL="https://github.com/docker/compose/releases/download/v${DOCKER_COMPOSE_VERSION}/docker-compose-linux-x86_64"
     local SYSBOX_URL="https://downloads.nestybox.com/sysbox/releases/v${SYSBOX_VERSION}/${SYSBOX_DEB}"
 
     mkdir -p "$LOG_DIR" "$RUN_DIR" "$ETC_DIR" "$BIN_DIR"
@@ -338,6 +340,7 @@ cmd_create() {
     echo "Downloading artifacts..."
     download "$DOCKER_URL"
     download "$DOCKER_ROOTLESS_URL"
+    download "$DOCKER_COMPOSE_URL"
     download "$SYSBOX_URL"
 
     echo "Extracting Docker binaries..."
@@ -355,6 +358,9 @@ cmd_create() {
     cp -f "$SYSBOX_EXTRACT/usr/bin/sysbox-runc" "$BIN_DIR/"
     cp -f "$SYSBOX_EXTRACT/usr/bin/sysbox-mgr" "$BIN_DIR/"
     cp -f "$SYSBOX_EXTRACT/usr/bin/sysbox-fs" "$BIN_DIR/"
+
+    echo "Installing Docker Compose..."
+    cp -f "${CACHE_DIR}/docker-compose-linux-x86_64" "${BIN_DIR}/docker-compose"
 
     chmod +x "$BIN_DIR"/*
 
