@@ -313,12 +313,14 @@ cmd_create() {
     local DOCKER_VERSION="29.2.1"
     local DOCKER_ROOTLESS_VERSION="29.2.1"
     local DOCKER_COMPOSE_VERSION="2.32.4"
+    local DOCKER_BUILDX_VERSION="0.31.1"
     local SYSBOX_VERSION="0.6.7"
     local SYSBOX_DEB="sysbox-ce_${SYSBOX_VERSION}-0.linux_amd64.deb"
 
     local DOCKER_URL="https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_VERSION}.tgz"
     local DOCKER_ROOTLESS_URL="https://download.docker.com/linux/static/stable/x86_64/docker-rootless-extras-${DOCKER_ROOTLESS_VERSION}.tgz"
     local DOCKER_COMPOSE_URL="https://github.com/docker/compose/releases/download/v${DOCKER_COMPOSE_VERSION}/docker-compose-linux-x86_64"
+    local DOCKER_BUILDX_URL="https://github.com/docker/buildx/releases/download/v${DOCKER_BUILDX_VERSION}/buildx-v${DOCKER_BUILDX_VERSION}.linux-amd64"
     local SYSBOX_URL="https://downloads.nestybox.com/sysbox/releases/v${SYSBOX_VERSION}/${SYSBOX_DEB}"
 
     mkdir -p "$LOG_DIR" "$RUN_DIR" "$ETC_DIR" "$BIN_DIR"
@@ -341,6 +343,7 @@ cmd_create() {
     download "$DOCKER_URL"
     download "$DOCKER_ROOTLESS_URL"
     download "$DOCKER_COMPOSE_URL"
+    download "$DOCKER_BUILDX_URL"
     download "$SYSBOX_URL"
 
     echo "Extracting Docker binaries..."
@@ -368,6 +371,11 @@ cmd_create() {
     cp -f "${CACHE_DIR}/docker-compose-linux-x86_64" "${CLI_PLUGINS_DIR}/docker-compose"
     chmod +x "${CLI_PLUGINS_DIR}/docker-compose"
 
+    echo "Installing Docker Buildx..."
+    # Install as Docker CLI plugin
+    cp -f "${CACHE_DIR}/buildx-v${DOCKER_BUILDX_VERSION}.linux-amd64" "${CLI_PLUGINS_DIR}/docker-buildx"
+    chmod +x "${CLI_PLUGINS_DIR}/docker-buildx"
+
     chmod +x "$BIN_DIR"/*
 
     # Rename docker CLI binary, replace with DOCKER_HOST wrapper
@@ -392,7 +400,10 @@ DOCKEREOF
     }
   },
   "storage-driver": "overlay2",
-  "userland-proxy-path": "${BIN_DIR}/docker-proxy"
+  "userland-proxy-path": "${BIN_DIR}/docker-proxy",
+  "features": {
+    "buildkit": true
+  }
 }
 DAEMONJSONEOF
     echo "Installed config to ${ETC_DIR}/daemon.json"

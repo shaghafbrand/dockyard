@@ -94,6 +94,7 @@ Defined in `cmd_create()`, cached in `.tmp/`:
 | Docker CE (static) | 29.2.1 | download.docker.com |
 | Docker Rootless Extras | 29.2.1 | download.docker.com |
 | Docker Compose | 2.32.4 | github.com/docker/compose |
+| Docker Buildx | 0.31.1 | github.com/docker/buildx |
 | Sysbox CE (.deb) | 0.6.7 | downloads.nestybox.com |
 
 ### Self-Contained Systemd Services
@@ -123,7 +124,7 @@ ${DOCKYARD_ROOT}/
     │   └── dockyard.env     # Copy of config (written by create)
     ├── lib/
     │   └── docker/
-    │       └── cli-plugins/ # Docker CLI plugins (docker-compose)
+    │       └── cli-plugins/ # Docker CLI plugins (docker-compose, docker-buildx)
     ├── log/                 # containerd.log, dockerd.log
     └── run/                 # containerd.pid
 
