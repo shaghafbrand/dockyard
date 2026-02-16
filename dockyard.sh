@@ -52,6 +52,7 @@ derive_vars() {
     DOCKER_SOCKET="${DOCKYARD_ROOT}/docker.sock"
     CONTAINERD_SOCKET="${EXEC_ROOT}/containerd/containerd.sock"
     DOCKER_DATA="${DOCKYARD_ROOT}/docker"
+    SYSBOX_SERVICE_NAME="${DOCKYARD_DOCKER_PREFIX}sysbox"
 }
 
 # ── Helpers ──────────────────────────────────────────────────
@@ -122,7 +123,8 @@ check_prefix_conflict() {
     local prefix="${1:-$DOCKYARD_DOCKER_PREFIX}"
     local bridge="${prefix}docker0"
     local exec_root="/run/${prefix}docker"
-    local service="${prefix}docker.service"
+    local docker_service="${prefix}docker.service"
+    local sysbox_service="${prefix}sysbox.service"
 
     if ip link show "$bridge" &>/dev/null; then
         echo "Error: Bridge ${bridge} already exists — DOCKYARD_DOCKER_PREFIX=${prefix} is in use." >&2
@@ -134,8 +136,13 @@ check_prefix_conflict() {
         echo "Use: DOCKYARD_DOCKER_PREFIX=myprefix_ ./dockyard.sh gen-env" >&2
         return 1
     fi
-    if systemctl list-unit-files "$service" &>/dev/null 2>&1 && systemctl cat "$service" &>/dev/null 2>&1; then
-        echo "Error: Systemd service ${service} already exists — DOCKYARD_DOCKER_PREFIX=${prefix} is in use." >&2
+    if systemctl list-unit-files "$docker_service" &>/dev/null 2>&1 && systemctl cat "$docker_service" &>/dev/null 2>&1; then
+        echo "Error: Systemd service ${docker_service} already exists — DOCKYARD_DOCKER_PREFIX=${prefix} is in use." >&2
+        echo "Use: DOCKYARD_DOCKER_PREFIX=myprefix_ ./dockyard.sh gen-env" >&2
+        return 1
+    fi
+    if systemctl list-unit-files "$sysbox_service" &>/dev/null 2>&1 && systemctl cat "$sysbox_service" &>/dev/null 2>&1; then
+        echo "Error: Systemd service ${sysbox_service} already exists — DOCKYARD_DOCKER_PREFIX=${prefix} is in use." >&2
         echo "Use: DOCKYARD_DOCKER_PREFIX=myprefix_ ./dockyard.sh gen-env" >&2
         return 1
     fi
@@ -477,12 +484,32 @@ cmd_start() {
         exit 1
     }
 
-    # --- 1. Verify sysbox is running (managed by systemd) ---
-    if ! pgrep -x sysbox-mgr >/dev/null || ! pgrep -x sysbox-fs >/dev/null; then
-        echo "Error: sysbox is not running. Start it with: sudo systemctl start sysbox-fs sysbox-mgr" >&2
-        exit 1
+    # --- 1. Start bundled sysbox daemons ---
+    mkdir -p /run/sysbox
+
+    echo "Starting sysbox-mgr..."
+    "${BIN_DIR}/sysbox-mgr" --data-root "${DOCKYARD_ROOT}/sysbox" &>"${LOG_DIR}/sysbox-mgr.log" &
+    SYSBOX_MGR_PID=$!
+    echo "$SYSBOX_MGR_PID" > "${RUN_DIR}/sysbox-mgr.pid"
+    STARTED_PIDS+=("$SYSBOX_MGR_PID")
+    sleep 2
+    if ! kill -0 "$SYSBOX_MGR_PID" 2>/dev/null; then
+        echo "Error: sysbox-mgr failed to start" >&2
+        cleanup
     fi
-    echo "sysbox: running (systemd)"
+    echo "  sysbox-mgr ready (pid ${SYSBOX_MGR_PID})"
+
+    echo "Starting sysbox-fs..."
+    "${BIN_DIR}/sysbox-fs" --data-root "${DOCKYARD_ROOT}/sysbox" &>"${LOG_DIR}/sysbox-fs.log" &
+    SYSBOX_FS_PID=$!
+    echo "$SYSBOX_FS_PID" > "${RUN_DIR}/sysbox-fs.pid"
+    STARTED_PIDS+=("$SYSBOX_FS_PID")
+    sleep 2
+    if ! kill -0 "$SYSBOX_FS_PID" 2>/dev/null; then
+        echo "Error: sysbox-fs failed to start" >&2
+        cleanup
+    fi
+    echo "  sysbox-fs ready (pid ${SYSBOX_FS_PID})"
 
     # --- 2. Create bridge ---
     if ! ip link show "$BRIDGE" &>/dev/null; then
@@ -534,9 +561,11 @@ cmd_start() {
 cmd_stop() {
     require_root
 
-    # Reverse startup order
+    # Reverse startup order: dockerd -> containerd -> sysbox-fs -> sysbox-mgr
     stop_daemon dockerd "${EXEC_ROOT}/dockerd.pid" 20
     stop_daemon containerd "${RUN_DIR}/containerd.pid" 10
+    stop_daemon sysbox-fs "${RUN_DIR}/sysbox-fs.pid" 10
+    stop_daemon sysbox-mgr "${RUN_DIR}/sysbox-mgr.pid" 10
 
     # Clean up sockets
     rm -f "$DOCKER_SOCKET" "$CONTAINERD_SOCKET"
@@ -574,12 +603,20 @@ cmd_status() {
     echo "  CONTAINERD_SOCKET=${CONTAINERD_SOCKET}"
     echo ""
 
-    # --- systemd service ---
+    # --- systemd services ---
     local SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
-    if [ -f "$SERVICE_FILE" ]; then
-        echo "systemd:    $(systemctl is-active "${SERVICE_NAME}.service" 2>/dev/null || echo "unknown") ($(systemctl is-enabled "${SERVICE_NAME}.service" 2>/dev/null || echo "unknown"))"
+    local SYSBOX_SERVICE_FILE="/etc/systemd/system/${SYSBOX_SERVICE_NAME}.service"
+
+    if [ -f "$SYSBOX_SERVICE_FILE" ]; then
+        echo "systemd (sysbox): $(systemctl is-active "${SYSBOX_SERVICE_NAME}.service" 2>/dev/null || echo "unknown") ($(systemctl is-enabled "${SYSBOX_SERVICE_NAME}.service" 2>/dev/null || echo "unknown"))"
     else
-        echo "systemd:    not installed"
+        echo "systemd (sysbox): not installed"
+    fi
+
+    if [ -f "$SERVICE_FILE" ]; then
+        echo "systemd (docker): $(systemctl is-active "${SERVICE_NAME}.service" 2>/dev/null || echo "unknown") ($(systemctl is-enabled "${SERVICE_NAME}.service" 2>/dev/null || echo "unknown"))"
+    else
+        echo "systemd (docker): not installed"
     fi
 
     # --- pid checks ---
@@ -599,6 +636,8 @@ cmd_status() {
         fi
     }
 
+    check_pid "sysbox-mgr" "${RUN_DIR}/sysbox-mgr.pid"
+    check_pid "sysbox-fs " "${RUN_DIR}/sysbox-fs.pid"
     check_pid "containerd" "${RUN_DIR}/containerd.pid"
     check_pid "dockerd   " "${EXEC_ROOT}/dockerd.pid"
 
@@ -647,20 +686,72 @@ cmd_enable() {
     require_root
 
     local SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
+    local SYSBOX_SERVICE_FILE="/etc/systemd/system/${SYSBOX_SERVICE_NAME}.service"
+
     if [ -f "$SERVICE_FILE" ]; then
         echo "Error: ${SERVICE_FILE} already exists." >&2
         exit 1
     fi
+    if [ -f "$SYSBOX_SERVICE_FILE" ]; then
+        echo "Error: ${SYSBOX_SERVICE_FILE} already exists." >&2
+        exit 1
+    fi
 
+    # --- 1. Install bundled sysbox service ---
+    echo "Installing ${SYSBOX_SERVICE_NAME}.service..."
+
+    cat > "$SYSBOX_SERVICE_FILE" <<SYSBOXSERVICEEOF
+[Unit]
+Description=Dockyard Sysbox (${SYSBOX_SERVICE_NAME})
+After=network-online.target
+Before=${SERVICE_NAME}.service
+Wants=network-online.target
+StartLimitBurst=3
+StartLimitIntervalSec=60
+
+[Service]
+Type=forking
+
+# Create runtime directories
+ExecStartPre=/bin/mkdir -p /run/sysbox ${LOG_DIR}
+
+# Start sysbox-mgr
+ExecStartPre=/bin/bash -c '${BIN_DIR}/sysbox-mgr --data-root ${DOCKYARD_ROOT}/sysbox &>${LOG_DIR}/sysbox-mgr.log & echo \$! > ${RUN_DIR}/sysbox-mgr.pid; sleep 2'
+
+# Start sysbox-fs
+ExecStart=/bin/bash -c '${BIN_DIR}/sysbox-fs --data-root ${DOCKYARD_ROOT}/sysbox &>${LOG_DIR}/sysbox-fs.log & echo \$! > ${RUN_DIR}/sysbox-fs.pid; sleep 2'
+
+# Stop sysbox-fs first
+ExecStop=/bin/bash -c 'if [ -f ${RUN_DIR}/sysbox-fs.pid ]; then kill \$(cat ${RUN_DIR}/sysbox-fs.pid) 2>/dev/null || true; rm -f ${RUN_DIR}/sysbox-fs.pid; fi; sleep 1'
+
+# Then stop sysbox-mgr
+ExecStopPost=/bin/bash -c 'if [ -f ${RUN_DIR}/sysbox-mgr.pid ]; then kill \$(cat ${RUN_DIR}/sysbox-mgr.pid) 2>/dev/null || true; rm -f ${RUN_DIR}/sysbox-mgr.pid; fi'
+
+TimeoutStartSec=60
+TimeoutStopSec=30
+Restart=on-failure
+RestartSec=5
+
+LimitNPROC=infinity
+LimitCORE=infinity
+LimitNOFILE=infinity
+
+[Install]
+WantedBy=multi-user.target
+SYSBOXSERVICEEOF
+    chmod 644 "$SYSBOX_SERVICE_FILE"
+    echo "  created ${SYSBOX_SERVICE_FILE}"
+
+    # --- 2. Install docker service ---
     echo "Installing ${SERVICE_NAME}.service..."
 
     cat > "$SERVICE_FILE" <<SERVICEEOF
 [Unit]
 Description=Dockyard Docker (${SERVICE_NAME})
-After=network-online.target nss-lookup.target firewalld.service sysbox.service time-set.target
+After=network-online.target nss-lookup.target firewalld.service ${SYSBOX_SERVICE_NAME}.service time-set.target
 Before=docker.service
 Wants=network-online.target
-Requires=sysbox.service
+Requires=${SYSBOX_SERVICE_NAME}.service
 StartLimitBurst=3
 StartLimitIntervalSec=60
 
@@ -722,46 +813,71 @@ WantedBy=multi-user.target
 SERVICEEOF
     chmod 644 "$SERVICE_FILE"
     systemctl daemon-reload
+    systemctl enable "${SYSBOX_SERVICE_NAME}.service"
     systemctl enable "${SERVICE_NAME}.service"
+    echo "  enabled ${SYSBOX_SERVICE_NAME}.service"
     echo "  enabled ${SERVICE_NAME}.service (will start on boot)"
     echo ""
-    echo "  sudo systemctl start ${SERVICE_NAME}    # start"
-    echo "  sudo systemctl status ${SERVICE_NAME}   # check status"
-    echo "  sudo journalctl -u ${SERVICE_NAME} -f   # follow logs"
+    echo "  sudo systemctl start ${SERVICE_NAME}    # start (starts sysbox automatically)"
+    echo "  sudo systemctl status ${SERVICE_NAME}   # check docker status"
+    echo "  sudo systemctl status ${SYSBOX_SERVICE_NAME}  # check sysbox status"
+    echo "  sudo journalctl -u ${SERVICE_NAME} -f   # follow docker logs"
+    echo "  sudo journalctl -u ${SYSBOX_SERVICE_NAME} -f # follow sysbox logs"
 }
 
 cmd_disable() {
     require_root
 
     local SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
-    if [ ! -f "$SERVICE_FILE" ]; then
-        echo "Error: ${SERVICE_FILE} does not exist." >&2
-        exit 1
+    local SYSBOX_SERVICE_FILE="/etc/systemd/system/${SYSBOX_SERVICE_NAME}.service"
+
+    # Stop and disable docker service
+    if [ -f "$SERVICE_FILE" ]; then
+        if systemctl is-active --quiet "${SERVICE_NAME}.service"; then
+            echo "Stopping ${SERVICE_NAME}..."
+            systemctl stop "${SERVICE_NAME}.service"
+            echo "  stopped"
+        fi
+        if systemctl is-enabled --quiet "${SERVICE_NAME}.service" 2>/dev/null; then
+            systemctl disable "${SERVICE_NAME}.service"
+            echo "  disabled"
+        fi
+        rm -f "$SERVICE_FILE"
+        echo "Removed ${SERVICE_FILE}"
+    else
+        echo "Warning: ${SERVICE_FILE} does not exist." >&2
     fi
 
-    if systemctl is-active --quiet "${SERVICE_NAME}.service"; then
-        echo "Stopping ${SERVICE_NAME}..."
-        systemctl stop "${SERVICE_NAME}.service"
-        echo "  stopped"
+    # Stop and disable sysbox service
+    if [ -f "$SYSBOX_SERVICE_FILE" ]; then
+        if systemctl is-active --quiet "${SYSBOX_SERVICE_NAME}.service"; then
+            echo "Stopping ${SYSBOX_SERVICE_NAME}..."
+            systemctl stop "${SYSBOX_SERVICE_NAME}.service"
+            echo "  stopped"
+        fi
+        if systemctl is-enabled --quiet "${SYSBOX_SERVICE_NAME}.service" 2>/dev/null; then
+            systemctl disable "${SYSBOX_SERVICE_NAME}.service"
+            echo "  disabled"
+        fi
+        rm -f "$SYSBOX_SERVICE_FILE"
+        echo "Removed ${SYSBOX_SERVICE_FILE}"
     fi
-    if systemctl is-enabled --quiet "${SERVICE_NAME}.service" 2>/dev/null; then
-        systemctl disable "${SERVICE_NAME}.service"
-        echo "  disabled"
-    fi
-    rm -f "$SERVICE_FILE"
+
     systemctl daemon-reload
-    echo "Removed ${SERVICE_FILE}"
 }
 
 cmd_destroy() {
     require_root
 
     local SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
+    local SYSBOX_SERVICE_FILE="/etc/systemd/system/${SYSBOX_SERVICE_NAME}.service"
 
     echo "This will remove all installed dockyard docker files:"
-    echo "  ${SERVICE_FILE}              (systemd service)"
+    echo "  ${SYSBOX_SERVICE_FILE}         (sysbox systemd service)"
+    echo "  ${SERVICE_FILE}              (docker systemd service)"
     echo "  ${RUNTIME_DIR}/    (binaries, config, logs, pids)"
     echo "  ${DOCKER_DATA}/            (images, containers, volumes)"
+    echo "  ${DOCKYARD_ROOT}/sysbox/          (sysbox data)"
     echo "  ${DOCKER_SOCKET}        (socket)"
     echo "  ${EXEC_ROOT}/                         (runtime state)"
     echo ""
@@ -771,12 +887,12 @@ cmd_destroy() {
         exit 0
     fi
 
-    # --- 1. Stop and remove systemd service (or stop daemons directly) ---
-    if [ -f "$SERVICE_FILE" ]; then
+    # --- 1. Stop and remove systemd services (or stop daemons directly) ---
+    if [ -f "$SERVICE_FILE" ] || [ -f "$SYSBOX_SERVICE_FILE" ]; then
         cmd_disable
     else
-        # No systemd service — stop daemons directly
-        for pidfile in "${EXEC_ROOT}/dockerd.pid" "${RUN_DIR}/containerd.pid"; do
+        # No systemd services — stop daemons directly
+        for pidfile in "${EXEC_ROOT}/dockerd.pid" "${RUN_DIR}/containerd.pid" "${RUN_DIR}/sysbox-fs.pid" "${RUN_DIR}/sysbox-mgr.pid"; do
             if [ -f "$pidfile" ]; then
                 local pid
                 pid=$(cat "$pidfile")
@@ -819,11 +935,17 @@ cmd_destroy() {
         echo "Removed ${DOCKER_DATA}/"
     fi
 
-    # --- 6. Remove env file ---
+    # --- 6. Remove sysbox data ---
+    if [ -d "${DOCKYARD_ROOT}/sysbox" ]; then
+        rm -rf "${DOCKYARD_ROOT}/sysbox"
+        echo "Removed ${DOCKYARD_ROOT}/sysbox/"
+    fi
+
+    # --- 7. Remove env file ---
     rm -f "${ETC_DIR}/dockyard.env"
     echo "Removed ${ETC_DIR}/dockyard.env"
 
-    # --- 7. Remove DOCKYARD_ROOT if empty ---
+    # --- 8. Remove DOCKYARD_ROOT if empty ---
     if [ -d "$DOCKYARD_ROOT" ]; then
         if rmdir "$DOCKYARD_ROOT" 2>/dev/null; then
             echo "Removed ${DOCKYARD_ROOT}/ (was empty)"

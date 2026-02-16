@@ -63,7 +63,7 @@ Each env file defines 6 variables that fully configure an instance:
 | `DOCKYARD_POOL_BASE` | Address pool for user networks | Yes |
 | `DOCKYARD_POOL_SIZE` | Pool subnet size in CIDR bits | No |
 
-Everything else is derived: `RUNTIME_DIR`, `BRIDGE`, `EXEC_ROOT`, `SERVICE_NAME`, `DOCKER_SOCKET`, `CONTAINERD_SOCKET`.
+Everything else is derived: `RUNTIME_DIR`, `BRIDGE`, `EXEC_ROOT`, `SERVICE_NAME`, `SYSBOX_SERVICE_NAME`, `DOCKER_SOCKET`, `CONTAINERD_SOCKET`.
 
 ### gen-env: Config Generation
 
@@ -81,7 +81,7 @@ Everything else is derived: `RUNTIME_DIR`, `BRIDGE`, `EXEC_ROOT`, `SERVICE_NAME`
 
 Three reusable helpers used by both `gen-env` and `create`:
 
-- `check_prefix_conflict()` — bridge exists, exec-root dir exists, systemd service exists
+- `check_prefix_conflict()` — bridge exists, exec-root dir exists, docker systemd service exists, sysbox systemd service exists
 - `check_root_conflict()` — `docker-runtime/bin/` already present
 - `check_subnet_conflict()` — `ip route` overlap for fixed CIDR and pool base
 
@@ -96,6 +96,37 @@ Defined in `cmd_create()`, cached in `.tmp/`:
 | Docker Compose | 2.32.4 | github.com/docker/compose |
 | Docker Buildx | 0.31.1 | github.com/docker/buildx |
 | Sysbox CE (.deb) | 0.6.7 | downloads.nestybox.com |
+
+### Bundled Sysbox: Per-Instance Runtime
+
+Each dockyard instance bundles its own isolated sysbox installation:
+
+**Extraction (not installation)**: The sysbox .deb is extracted to get binaries (sysbox-runc, sysbox-mgr, sysbox-fs) but NOT installed via dpkg. No system-wide sysbox.service is created.
+
+**Bundled Service**: A `${PREFIX}sysbox.service` systemd unit is generated that:
+- Starts sysbox-mgr first (manages container creation)
+- Then starts sysbox-fs (manages container filesystems)
+- Uses bundled binaries from `${BIN_DIR}/`
+- Stores data in `${DOCKYARD_ROOT}/sysbox/`
+- Logs to `${LOG_DIR}/sysbox-{mgr,fs}.log`
+
+**Startup Sequence**:
+```
+${PREFIX}sysbox.service starts
+  ├─ sysbox-mgr (manages container lifecycle)
+  └─ sysbox-fs (manages container filesystems)
+       └─ ${PREFIX}docker.service starts
+            ├─ containerd
+            └─ dockerd (with sysbox-runc as default runtime)
+```
+
+**Service Dependencies**: The docker service has `Requires=${SYSBOX_SERVICE_NAME}.service`, ensuring sysbox starts first.
+
+**Isolation Benefits**:
+- Multiple dockyard instances can run different sysbox versions
+- No system-wide sysbox dependency or conflicts
+- Each instance's sysbox data is isolated
+- Clean uninstall removes everything (no system-wide state)
 
 ### Self-Contained Systemd Services
 
@@ -117,21 +148,33 @@ ${DOCKYARD_ROOT}/
 ├── docker.sock              # Docker API socket
 ├── docker/                  # Docker data (images, containers, volumes)
 │   └── containerd/          # Containerd content store
+├── sysbox/                  # Sysbox data (bundled instance-specific)
 └── docker-runtime/
-    ├── bin/                 # dockerd, containerd, sysbox-runc, dockyardctl, docker wrapper, etc.
+    ├── bin/                 # dockerd, containerd, sysbox-{runc,mgr,fs}, dockyardctl, docker wrapper, etc.
     ├── etc/
     │   ├── daemon.json      # Docker daemon config
     │   └── dockyard.env     # Copy of config (written by create)
     ├── lib/
     │   └── docker/
     │       └── cli-plugins/ # Docker CLI plugins (docker-compose, docker-buildx)
-    ├── log/                 # containerd.log, dockerd.log
-    └── run/                 # containerd.pid
+    ├── log/
+    │   ├── sysbox-mgr.log   # Sysbox manager logs
+    │   ├── sysbox-fs.log    # Sysbox filesystem logs
+    │   ├── containerd.log   # Containerd logs
+    │   └── dockerd.log      # Docker daemon logs
+    └── run/
+        ├── sysbox-mgr.pid   # Sysbox manager PID
+        ├── sysbox-fs.pid    # Sysbox filesystem PID
+        └── containerd.pid   # Containerd PID
 
 /run/${PREFIX}docker/        # Runtime state (tmpfs)
 ├── containerd/
 │   └── containerd.sock
 └── dockerd.pid
+
+/etc/systemd/system/
+├── ${PREFIX}sysbox.service  # Bundled sysbox service
+└── ${PREFIX}docker.service  # Docker service (depends on sysbox)
 ```
 
 ## Script Conventions
