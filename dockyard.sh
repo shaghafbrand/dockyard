@@ -500,7 +500,8 @@ cmd_start() {
     echo "  sysbox-mgr ready (pid ${SYSBOX_MGR_PID})"
 
     echo "Starting sysbox-fs..."
-    "${BIN_DIR}/sysbox-fs" --data-root "${DOCKYARD_ROOT}/sysbox" &>"${LOG_DIR}/sysbox-fs.log" &
+    # sysbox-fs 0.6.7+ uses --mountpoint instead of --data-root
+    "${BIN_DIR}/sysbox-fs" --mountpoint "${DOCKYARD_ROOT}/sysbox" &>"${LOG_DIR}/sysbox-fs.log" &
     SYSBOX_FS_PID=$!
     echo "$SYSBOX_FS_PID" > "${RUN_DIR}/sysbox-fs.pid"
     STARTED_PIDS+=("$SYSBOX_FS_PID")
@@ -718,8 +719,8 @@ ExecStartPre=/bin/mkdir -p /run/sysbox ${LOG_DIR}
 # Start sysbox-mgr
 ExecStartPre=/bin/bash -c '${BIN_DIR}/sysbox-mgr --data-root ${DOCKYARD_ROOT}/sysbox &>${LOG_DIR}/sysbox-mgr.log & echo \$! > ${RUN_DIR}/sysbox-mgr.pid; sleep 2'
 
-# Start sysbox-fs
-ExecStart=/bin/bash -c '${BIN_DIR}/sysbox-fs --data-root ${DOCKYARD_ROOT}/sysbox &>${LOG_DIR}/sysbox-fs.log & echo \$! > ${RUN_DIR}/sysbox-fs.pid; sleep 2'
+# Start sysbox-fs (0.6.7+ uses --mountpoint instead of --data-root)
+ExecStart=/bin/bash -c '${BIN_DIR}/sysbox-fs --mountpoint ${DOCKYARD_ROOT}/sysbox &>${LOG_DIR}/sysbox-fs.log & echo \$! > ${RUN_DIR}/sysbox-fs.pid; sleep 2'
 
 # Stop sysbox-fs first
 ExecStop=/bin/bash -c 'if [ -f ${RUN_DIR}/sysbox-fs.pid ]; then kill \$(cat ${RUN_DIR}/sysbox-fs.pid) 2>/dev/null || true; rm -f ${RUN_DIR}/sysbox-fs.pid; fi; sleep 1'
