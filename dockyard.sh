@@ -335,6 +335,24 @@ cmd_create() {
     mkdir -p "$CACHE_DIR"
     mkdir -p /run/sysbox
 
+    # Allow sysbox-fs FUSE mounts at the dockyard sysbox mountpoint.
+    # The default fusermount3 AppArmor profile (tightened in Ubuntu 25.10+)
+    # only permits FUSE mounts under $HOME, /mnt, /tmp, etc.  Without this
+    # override every sysbox container fails with a context-deadline-exceeded
+    # RPC error from sysbox-fs.
+    if [ -d /etc/apparmor.d ]; then
+        mkdir -p /etc/apparmor.d/local
+        cat > /etc/apparmor.d/local/fusermount3 <<APPARMOR
+# Allow sysbox-fs FUSE mounts
+mount fstype=fuse options=(nosuid,nodev) options in (ro,rw) -> ${DOCKYARD_ROOT}/sysbox/**/,
+umount ${DOCKYARD_ROOT}/sysbox/**/,
+APPARMOR
+        if [ -f /etc/apparmor.d/fusermount3 ]; then
+            apparmor_parser -r /etc/apparmor.d/fusermount3
+            echo "  AppArmor fusermount3 profile updated"
+        fi
+    fi
+
     download() {
         local url="$1"
         local dest="${CACHE_DIR}/$(basename "$url")"
