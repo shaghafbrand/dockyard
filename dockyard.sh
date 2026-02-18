@@ -159,6 +159,25 @@ check_root_conflict() {
     return 0
 }
 
+check_private_cidr() {
+    local cidr="$1"
+    local label="$2"
+    local ip="${cidr%/*}"
+    local o1 o2
+    IFS='.' read -r o1 o2 _ <<< "$ip"
+
+    # 10.0.0.0/8
+    if [ "$o1" -eq 10 ]; then return 0; fi
+    # 172.16.0.0/12
+    if [ "$o1" -eq 172 ] && [ "$o2" -ge 16 ] && [ "$o2" -le 31 ]; then return 0; fi
+    # 192.168.0.0/16
+    if [ "$o1" -eq 192 ] && [ "$o2" -eq 168 ]; then return 0; fi
+
+    echo "Error: ${label} ${cidr} is not in an RFC 1918 private range." >&2
+    echo "  Valid ranges: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16" >&2
+    return 1
+}
+
 check_subnet_conflict() {
     local fixed_cidr="$1"
     local pool_base="$2"
@@ -255,6 +274,11 @@ cmd_gen_env() {
         fi
     fi
 
+    # Validate all CIDRs are in RFC 1918 private ranges
+    check_private_cidr "$bridge_cidr" "DOCKYARD_BRIDGE_CIDR" || exit 1
+    check_private_cidr "$fixed_cidr"  "DOCKYARD_FIXED_CIDR"  || exit 1
+    check_private_cidr "$pool_base"   "DOCKYARD_POOL_BASE"   || exit 1
+
     # Conflict checks (unless --nocheck)
     if [ "$NOCHECK" = false ]; then
         check_prefix_conflict "$prefix" || exit 1
@@ -310,6 +334,9 @@ cmd_create() {
     echo ""
 
     # --- Check for existing installation ---
+    check_private_cidr "$DOCKYARD_BRIDGE_CIDR" "DOCKYARD_BRIDGE_CIDR" || exit 1
+    check_private_cidr "$DOCKYARD_FIXED_CIDR"  "DOCKYARD_FIXED_CIDR"  || exit 1
+    check_private_cidr "$DOCKYARD_POOL_BASE"   "DOCKYARD_POOL_BASE"   || exit 1
     check_root_conflict "$DOCKYARD_ROOT" || exit 1
     check_prefix_conflict "$DOCKYARD_DOCKER_PREFIX" || exit 1
     check_subnet_conflict "$DOCKYARD_FIXED_CIDR" "$DOCKYARD_POOL_BASE" || exit 1
