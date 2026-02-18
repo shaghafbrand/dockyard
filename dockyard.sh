@@ -102,6 +102,34 @@ stop_daemon() {
     echo "  ${name} stopped"
 }
 
+cleanup_pool_bridges() {
+    # Remove leftover kernel bridge interfaces (br-*) whose IP falls within
+    # DOCKYARD_POOL_BASE. When dockerd exits, it does not clean up user-defined
+    # network bridges. Left behind, they cause "overlaps with existing routes"
+    # errors on the next install because the pool CIDR is still in the routing table.
+    local pool_base="${DOCKYARD_POOL_BASE:-}"
+    [ -n "$pool_base" ] || return 0
+
+    # Extract the first two octets of the pool base (e.g. "10.89" from "10.89.0.0/16")
+    local pool_prefix
+    pool_prefix=$(echo "$pool_base" | grep -oP '^\d+\.\d+')
+
+    local removed=0
+    while IFS= read -r iface; do
+        [[ "$iface" == br-* ]] || continue
+        local iface_ip
+        iface_ip=$(ip addr show "$iface" 2>/dev/null | grep -oP 'inet \K[^/]+' | head -1)
+        if [[ -n "$iface_ip" && "$iface_ip" == ${pool_prefix}.* ]]; then
+            echo "Removing leftover pool bridge: ${iface} (${iface_ip})"
+            ip link set "$iface" down 2>/dev/null || true
+            ip link delete "$iface" 2>/dev/null || true
+            removed=$((removed + 1))
+        fi
+    done < <(ip link show type bridge 2>/dev/null | grep -oP '^\d+: \K[^:@]+')
+
+    [ "$removed" -gt 0 ] || true
+}
+
 wait_for_file() {
     local file="$1"
     local label="$2"
@@ -623,6 +651,9 @@ cmd_stop() {
         echo "Bridge ${BRIDGE} removed"
     fi
 
+    # Remove leftover user-defined network bridges from the pool range
+    cleanup_pool_bridges
+
     echo "=== All daemons stopped ==="
 }
 
@@ -956,6 +987,9 @@ cmd_destroy() {
         fi
         sleep 2
     fi
+
+    # --- 1.5. Remove leftover user-defined network bridges from the pool ---
+    cleanup_pool_bridges
 
     # --- 2. Remove runtime state ---
     if [ -d "$EXEC_ROOT" ]; then
