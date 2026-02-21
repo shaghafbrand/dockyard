@@ -93,8 +93,6 @@ Defined in `cmd_create()`, cached in `.tmp/`:
 |----------|---------|--------|
 | Docker CE (static) | 29.2.1 | download.docker.com |
 | Docker Rootless Extras | 29.2.1 | download.docker.com |
-| Docker Compose | 2.32.4 | github.com/docker/compose |
-| Docker Buildx | 0.31.1 | github.com/docker/buildx |
 | Sysbox CE (.deb) | 0.6.7 | downloads.nestybox.com |
 
 ### Bundled Sysbox: Per-Instance Runtime
@@ -155,8 +153,7 @@ ${DOCKYARD_ROOT}/
     │   ├── daemon.json      # Docker daemon config
     │   └── dockyard.env     # Copy of config (written by create)
     ├── lib/
-    │   └── docker/
-    │       └── cli-plugins/ # Docker CLI plugins (docker-compose, docker-buildx)
+    │   └── docker/          # DOCKER_CONFIG dir (credentials, config)
     ├── log/
     │   ├── sysbox-mgr.log   # Sysbox manager logs
     │   ├── sysbox-fs.log    # Sysbox filesystem logs
