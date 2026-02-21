@@ -7,7 +7,9 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 LOADED_ENV_FILE=""
 
-load_env() {
+# Returns 0 on success, 1 if no config file exists.
+# Exits immediately if DOCKYARD_ENV is set but the file is missing.
+try_load_env() {
     local script_env="${SCRIPT_DIR}/../etc/dockyard.env"
     local root_env="${DOCKYARD_ROOT:-/dockyard}/docker-runtime/etc/dockyard.env"
 
@@ -24,13 +26,19 @@ load_env() {
     elif [ -f "$root_env" ]; then
         LOADED_ENV_FILE="$root_env"
     else
-        echo "Error: No config found." >&2
-        echo "Run './dockyard.sh gen-env' to generate one, or set DOCKYARD_ENV." >&2
-        exit 1
+        return 1
     fi
 
     echo "Loading ${LOADED_ENV_FILE}..."
     set -a; source "$LOADED_ENV_FILE"; set +a
+}
+
+load_env() {
+    if ! try_load_env; then
+        echo "Error: No config found." >&2
+        echo "Run './dockyard.sh gen-env' to generate one, or set DOCKYARD_ENV." >&2
+        exit 1
+    fi
 }
 
 derive_vars() {
@@ -1137,7 +1145,11 @@ case "$COMMAND" in
         cmd_gen_env "$@"
         ;;
     create)
-        load_env
+        if ! try_load_env; then
+            echo "No config found — auto-generating with random networks..."
+            cmd_gen_env
+            load_env
+        fi
         derive_vars
         cmd_create "$@"
         ;;
