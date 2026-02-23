@@ -1,0 +1,116 @@
+# ── Helpers ──────────────────────────────────────────────────
+
+require_root() {
+    if [ "$(id -u)" -ne 0 ]; then
+        echo "Error: must run as root (use sudo)" >&2
+        exit 1
+    fi
+}
+
+stop_daemon() {
+    local name="$1"
+    local pidfile="$2"
+    local timeout="${3:-10}"
+
+    if [ ! -f "$pidfile" ]; then
+        echo "${name}: no pid file"
+        return 0
+    fi
+
+    local pid
+    pid=$(cat "$pidfile")
+
+    if ! kill -0 "$pid" 2>/dev/null; then
+        echo "${name}: not running (stale pid ${pid})"
+        rm -f "$pidfile"
+        return 0
+    fi
+
+    echo "Stopping ${name} (pid ${pid})..."
+    kill "$pid"
+
+    local i=0
+    while kill -0 "$pid" 2>/dev/null; do
+        sleep 1
+        i=$((i + 1))
+        if [ "$i" -ge "$timeout" ]; then
+            echo "  ${name} did not stop in ${timeout}s — sending SIGKILL"
+            kill -9 "$pid" 2>/dev/null || true
+            sleep 1
+            break
+        fi
+    done
+
+    rm -f "$pidfile"
+    echo "  ${name} stopped"
+}
+
+cleanup_pool_bridges() {
+    # Remove leftover kernel bridge interfaces (br-*) whose IP falls within
+    # DOCKYARD_POOL_BASE. When dockerd exits, it does not clean up user-defined
+    # network bridges. Left behind, they cause "overlaps with existing routes"
+    # errors on the next install because the pool CIDR is still in the routing table.
+    local pool_base="${DOCKYARD_POOL_BASE:-}"
+    [ -n "$pool_base" ] || return 0
+
+    # Extract the first two octets of the pool base (e.g. "10.89" from "10.89.0.0/16")
+    local pool_prefix
+    pool_prefix=$(echo "$pool_base" | grep -oP '^\d+\.\d+')
+
+    local removed=0
+    while IFS= read -r iface; do
+        [[ "$iface" == br-* ]] || continue
+        local iface_ip
+        iface_ip=$(ip addr show "$iface" 2>/dev/null | grep -oP 'inet \K[^/]+' | head -1)
+        if [[ -n "$iface_ip" && "$iface_ip" == ${pool_prefix}.* ]]; then
+            echo "Removing leftover pool bridge: ${iface} (${iface_ip})"
+            ip link set "$iface" down 2>/dev/null || true
+            ip link delete "$iface" 2>/dev/null || true
+            removed=$((removed + 1))
+        fi
+    done < <(ip link show type bridge 2>/dev/null | grep -oP '^\d+: \K[^:@]+')
+
+    [ "$removed" -gt 0 ] || true
+}
+
+# Atomically increment sysbox refcount (non-systemd mode).
+# Echoes the new count; caller should start sysbox if count == 1.
+sysbox_acquire() {
+    mkdir -p /run/sysbox
+    (
+        flock -x 9
+        count=$(cat "$SYSBOX_REFCOUNT" 2>/dev/null || echo 0)
+        count=$((count + 1))
+        echo "$count" > "$SYSBOX_REFCOUNT"
+        echo "$count"
+    ) 9>"$SYSBOX_REFCOUNT_LOCK"
+}
+
+# Atomically decrement sysbox refcount (non-systemd mode).
+# Echoes the new count; caller should stop sysbox if count == 0.
+sysbox_release() {
+    mkdir -p /run/sysbox
+    (
+        flock -x 9
+        count=$(cat "$SYSBOX_REFCOUNT" 2>/dev/null || echo 1)
+        count=$((count - 1))
+        [ "$count" -lt 0 ] && count=0
+        echo "$count" > "$SYSBOX_REFCOUNT"
+        echo "$count"
+    ) 9>"$SYSBOX_REFCOUNT_LOCK"
+}
+
+wait_for_file() {
+    local file="$1"
+    local label="$2"
+    local timeout="${3:-30}"
+    local i=0
+    while [ ! -e "$file" ]; do
+        sleep 1
+        i=$((i + 1))
+        if [ "$i" -ge "$timeout" ]; then
+            echo "Error: $label did not become ready within ${timeout}s" >&2
+            return 1
+        fi
+    done
+}
