@@ -7,21 +7,12 @@ cmd_stop() {
         rm -f "${RUN_DIR}/dind-watcher.pid"
     fi
 
-    # Reverse startup order: dockerd -> containerd -> sysbox (ref-counted)
+    # Reverse startup order: dockerd -> containerd -> sysbox
     stop_daemon dockerd "${EXEC_ROOT}/dockerd.pid" 20
     stop_daemon containerd "${RUN_DIR}/containerd.pid" 10
-
-    local SYSBOX_COUNT
-    SYSBOX_COUNT=$(sysbox_release)
-    echo "Sysbox refcount after release: ${SYSBOX_COUNT}"
-    if [ "$SYSBOX_COUNT" -eq 0 ]; then
-        echo "Last dockyard instance stopping — shutting down shared sysbox..."
-        stop_daemon sysbox-fs "/run/sysbox/sysbox-fs.pid" 10
-        stop_daemon sysbox-mgr "/run/sysbox/sysbox-mgr.pid" 10
-        rm -f "$SYSBOX_REFCOUNT"
-    else
-        echo "  Sysbox still in use (refcount=${SYSBOX_COUNT}), leaving running"
-    fi
+    stop_daemon sysbox-fs "${SYSBOX_RUN_DIR}/sysbox-fs.pid" 10
+    stop_daemon sysbox-mgr "${SYSBOX_RUN_DIR}/sysbox-mgr.pid" 10
+    rm -rf "$SYSBOX_RUN_DIR"
 
     # Clean up sockets
     rm -f "$DOCKER_SOCKET" "$CONTAINERD_SOCKET"

@@ -73,33 +73,6 @@ cleanup_pool_bridges() {
     [ "$removed" -gt 0 ] || true
 }
 
-# Atomically increment sysbox refcount (non-systemd mode).
-# Echoes the new count; caller should start sysbox if count == 1.
-sysbox_acquire() {
-    mkdir -p /run/sysbox
-    (
-        flock -x 9
-        count=$(cat "$SYSBOX_REFCOUNT" 2>/dev/null || echo 0)
-        count=$((count + 1))
-        echo "$count" > "$SYSBOX_REFCOUNT"
-        echo "$count"
-    ) 9>"$SYSBOX_REFCOUNT_LOCK"
-}
-
-# Atomically decrement sysbox refcount (non-systemd mode).
-# Echoes the new count; caller should stop sysbox if count == 0.
-sysbox_release() {
-    mkdir -p /run/sysbox
-    (
-        flock -x 9
-        count=$(cat "$SYSBOX_REFCOUNT" 2>/dev/null || echo 1)
-        count=$((count - 1))
-        [ "$count" -lt 0 ] && count=0
-        echo "$count" > "$SYSBOX_REFCOUNT"
-        echo "$count"
-    ) 9>"$SYSBOX_REFCOUNT_LOCK"
-}
-
 wait_for_file() {
     local file="$1"
     local label="$2"

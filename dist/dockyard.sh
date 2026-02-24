@@ -65,13 +65,9 @@ derive_vars() {
     INSTANCE_USER="${DOCKYARD_DOCKER_PREFIX}docker"
     INSTANCE_GROUP="${DOCKYARD_DOCKER_PREFIX}docker"
 
-    # Shared sysbox daemon (one per host, not per instance)
-    SYSBOX_SERVICE_NAME="dockyard-sysbox"
-    SYSBOX_SHARED_BIN="/usr/local/lib/dockyard"
-    SYSBOX_SHARED_DATA="/var/lib/dockyard-sysbox"
-    SYSBOX_SHARED_LOG="/var/log/dockyard-sysbox"
-    SYSBOX_REFCOUNT="/run/sysbox/dockyard-refcount"
-    SYSBOX_REFCOUNT_LOCK="/run/sysbox/dockyard-refcount.lock"
+    # Per-instance sysbox daemons (separate sysbox-mgr + sysbox-fs per installation)
+    SYSBOX_RUN_DIR="${DOCKYARD_ROOT}/sysbox-run"
+    SYSBOX_DATA_DIR="${DOCKYARD_ROOT}/sysbox"
 }
 
 # ── Helpers ──────────────────────────────────────────────────
@@ -147,33 +143,6 @@ cleanup_pool_bridges() {
     done < <(ip link show type bridge 2>/dev/null | grep -oP '^\d+: \K[^:@]+')
 
     [ "$removed" -gt 0 ] || true
-}
-
-# Atomically increment sysbox refcount (non-systemd mode).
-# Echoes the new count; caller should start sysbox if count == 1.
-sysbox_acquire() {
-    mkdir -p /run/sysbox
-    (
-        flock -x 9
-        count=$(cat "$SYSBOX_REFCOUNT" 2>/dev/null || echo 0)
-        count=$((count + 1))
-        echo "$count" > "$SYSBOX_REFCOUNT"
-        echo "$count"
-    ) 9>"$SYSBOX_REFCOUNT_LOCK"
-}
-
-# Atomically decrement sysbox refcount (non-systemd mode).
-# Echoes the new count; caller should stop sysbox if count == 0.
-sysbox_release() {
-    mkdir -p /run/sysbox
-    (
-        flock -x 9
-        count=$(cat "$SYSBOX_REFCOUNT" 2>/dev/null || echo 1)
-        count=$((count - 1))
-        [ "$count" -lt 0 ] && count=0
-        echo "$count" > "$SYSBOX_REFCOUNT"
-        echo "$count"
-    ) 9>"$SYSBOX_REFCOUNT_LOCK"
 }
 
 wait_for_file() {
@@ -428,26 +397,24 @@ cmd_create() {
     #   sysbox procfs incompatibility (nestybox/sysbox#973).
     #   Minimum 29.x required for the DinD ownership watcher (commit 2deac51).
     #
-    # SYSBOX_VERSION: 0.6.7 is the last CE release (May 2024). EE archived Aug
-    #   2025. Incompatible with containerd.io ≥ 1.7.28-2 and ≥ 2.x when used
-    #   via apt (does not affect the static binary path used here).
-    #   The inner sandbox image pins containerd.io=1.7.27-1 to stay clear of
-    #   both the 1.7.28-2 runc-1.3.3 issue and the containerd-2.x breakage.
-    #   See Sandcastle issue #56, nestybox/sysbox#973, opencontainers/runc#4968.
+    # SYSBOX_VERSION: 0.6.7.2-tc is a patched fork (github.com/thieso2/sysbox)
+    #   that adds --run-dir to sysbox-mgr, sysbox-fs, and sysbox-runc, allowing
+    #   N independent sysbox instances per host (each with its own socket dir).
+    #   Distributed as a static tarball (no .deb, no dpkg dependency).
     local DOCKER_VERSION="29.2.1"
     local DOCKER_ROOTLESS_VERSION="29.2.1"
-    local SYSBOX_VERSION="0.6.7"
-    local SYSBOX_DEB="sysbox-ce_${SYSBOX_VERSION}-0.linux_amd64.deb"
+    local SYSBOX_VERSION="0.6.7.2-tc"
+    local SYSBOX_TARBALL="sysbox-static-x86_64.tar.gz"
 
     local DOCKER_URL="https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_VERSION}.tgz"
     local DOCKER_ROOTLESS_URL="https://download.docker.com/linux/static/stable/x86_64/docker-rootless-extras-${DOCKER_ROOTLESS_VERSION}.tgz"
-    local SYSBOX_URL="https://downloads.nestybox.com/sysbox/releases/v${SYSBOX_VERSION}/${SYSBOX_DEB}"
+    local SYSBOX_URL="https://github.com/thieso2/sysbox/releases/download/v${SYSBOX_VERSION}/${SYSBOX_TARBALL}"
 
     mkdir -p "$LOG_DIR" "$RUN_DIR" "$ETC_DIR" "$BIN_DIR"
     mkdir -p "$DOCKER_DATA"
     mkdir -p "$CACHE_DIR"
-    mkdir -p /run/sysbox
-    mkdir -p "$SYSBOX_SHARED_BIN" "$SYSBOX_SHARED_DATA" "$SYSBOX_SHARED_LOG"
+    mkdir -p "$SYSBOX_RUN_DIR"
+    mkdir -p "$SYSBOX_DATA_DIR"
 
     # Create system user and group for this instance.
     # dockerd runs as root but creates the socket owned by this group (--group flag),
@@ -466,21 +433,28 @@ cmd_create() {
         echo "  User ${INSTANCE_USER} already exists"
     fi
 
-    # Allow sysbox-fs FUSE mounts at the dockyard sysbox mountpoint.
+    # Allow sysbox-fs FUSE mounts at this instance's sysbox mountpoint.
     # The default fusermount3 AppArmor profile (tightened in Ubuntu 25.10+)
     # only permits FUSE mounts under $HOME, /mnt, /tmp, etc.  Without this
     # override every sysbox container fails with a context-deadline-exceeded
     # RPC error from sysbox-fs.
+    # Each instance appends a tagged block; destroy removes it.
     if [ -d /etc/apparmor.d ]; then
         mkdir -p /etc/apparmor.d/local
-        cat > /etc/apparmor.d/local/fusermount3 <<APPARMOR
-# Allow sysbox-fs FUSE mounts (shared dockyard-sysbox mountpoint)
-mount fstype=fuse options=(nosuid,nodev) options in (ro,rw) -> ${SYSBOX_SHARED_DATA}/**/,
-umount ${SYSBOX_SHARED_DATA}/**/,
-APPARMOR
+        local apparmor_file="/etc/apparmor.d/local/fusermount3"
+        local apparmor_begin="# dockyard:${DOCKYARD_DOCKER_PREFIX}:begin"
+        local apparmor_end="# dockyard:${DOCKYARD_DOCKER_PREFIX}:end"
+        if ! grep -qF "$apparmor_begin" "$apparmor_file" 2>/dev/null; then
+            {
+                echo "$apparmor_begin"
+                echo "mount fstype=fuse options=(nosuid,nodev) options in (ro,rw) -> ${SYSBOX_DATA_DIR}/**/,"
+                echo "umount ${SYSBOX_DATA_DIR}/**/,"
+                echo "$apparmor_end"
+            } >> "$apparmor_file"
+        fi
         if [ -f /etc/apparmor.d/fusermount3 ]; then
             apparmor_parser -r /etc/apparmor.d/fusermount3
-            echo "  AppArmor fusermount3 profile updated"
+            echo "  AppArmor fusermount3 profile updated for ${SYSBOX_DATA_DIR}"
         fi
     fi
 
@@ -508,16 +482,21 @@ APPARMOR
     tar -xzf "${CACHE_DIR}/docker-rootless-extras-${DOCKER_ROOTLESS_VERSION}.tgz" -C "$CACHE_DIR"
     cp -f "${CACHE_DIR}/docker-rootless-extras/"* "$BIN_DIR/"
 
-    echo "Extracting sysbox from .deb..."
-    local SYSBOX_EXTRACT="${CACHE_DIR}/sysbox-extract"
+    echo "Extracting sysbox static binaries..."
+    local SYSBOX_EXTRACT="${CACHE_DIR}/sysbox-static-${SYSBOX_VERSION}"
     mkdir -p "$SYSBOX_EXTRACT"
-    dpkg-deb -x "${CACHE_DIR}/${SYSBOX_DEB}" "$SYSBOX_EXTRACT"
-    # sysbox-runc is per-instance (called by containerd via daemon.json)
-    cp -f "$SYSBOX_EXTRACT/usr/bin/sysbox-runc" "$BIN_DIR/"
-    # sysbox-mgr and sysbox-fs go to the shared location (one daemon per host)
-    cp -f "$SYSBOX_EXTRACT/usr/bin/sysbox-mgr" "$SYSBOX_SHARED_BIN/"
-    cp -f "$SYSBOX_EXTRACT/usr/bin/sysbox-fs" "$SYSBOX_SHARED_BIN/"
-    chmod +x "$SYSBOX_SHARED_BIN/"sysbox-{mgr,fs}
+    tar -xzf "${CACHE_DIR}/${SYSBOX_TARBALL}" -C "$SYSBOX_EXTRACT"
+    # All three binaries go to the per-instance BIN_DIR
+    for bin in sysbox-runc sysbox-mgr sysbox-fs; do
+        local src
+        src=$(find "$SYSBOX_EXTRACT" -name "$bin" -type f | head -1)
+        if [ -z "$src" ]; then
+            echo "Error: $bin not found in ${SYSBOX_TARBALL}" >&2
+            exit 1
+        fi
+        cp -f "$src" "$BIN_DIR/$bin"
+        chmod +x "$BIN_DIR/$bin"
+    done
 
     mkdir -p "${RUNTIME_DIR}/lib/docker"
 
@@ -535,12 +514,15 @@ DOCKEREOF
     echo "Installed binaries to ${BIN_DIR}/"
 
     # Write daemon.json (embedded — no external file dependency)
+    # runtimeArgs passes --run-dir so sysbox-runc connects to the per-instance
+    # sysbox-mgr and sysbox-fs sockets in SYSBOX_RUN_DIR.
     cat > "${ETC_DIR}/daemon.json" <<DAEMONJSONEOF
 {
   "default-runtime": "sysbox-runc",
   "runtimes": {
     "sysbox-runc": {
-      "path": "${BIN_DIR}/sysbox-runc"
+      "path": "${BIN_DIR}/sysbox-runc",
+      "runtimeArgs": ["--run-dir", "${SYSBOX_RUN_DIR}"]
     }
   },
   "storage-driver": "overlay2",
@@ -599,73 +581,20 @@ cmd_enable() {
     require_root
 
     local SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
-    local SYSBOX_SERVICE_FILE="/etc/systemd/system/${SYSBOX_SERVICE_NAME}.service"
 
     if [ -f "$SERVICE_FILE" ]; then
         echo "Error: ${SERVICE_FILE} already exists." >&2
         exit 1
     fi
 
-    # --- 1. Install shared sysbox service (one per host, skip if already installed) ---
-    if [ -f "$SYSBOX_SERVICE_FILE" ]; then
-        echo "  ${SYSBOX_SERVICE_NAME}.service already installed (shared by other instances)"
-    else
-        echo "Installing ${SYSBOX_SERVICE_NAME}.service (shared host daemon)..."
-        mkdir -p "$SYSBOX_SHARED_LOG"
-
-        cat > "$SYSBOX_SERVICE_FILE" <<SYSBOXSERVICEEOF
-[Unit]
-Description=Dockyard Sysbox (shared host daemon)
-After=network-online.target
-Wants=network-online.target
-StartLimitBurst=3
-StartLimitIntervalSec=60
-
-[Service]
-Type=forking
-
-# Create runtime directories
-ExecStartPre=/bin/mkdir -p /run/sysbox ${SYSBOX_SHARED_DATA} ${SYSBOX_SHARED_LOG}
-
-# Start sysbox-mgr
-ExecStartPre=/bin/bash -c '${SYSBOX_SHARED_BIN}/sysbox-mgr --data-root ${SYSBOX_SHARED_DATA} &>${SYSBOX_SHARED_LOG}/sysbox-mgr.log & echo \$! > /run/sysbox/sysbox-mgr.pid; sleep 2'
-
-# Start sysbox-fs (0.6.7+ uses --mountpoint)
-ExecStart=/bin/bash -c '${SYSBOX_SHARED_BIN}/sysbox-fs --mountpoint ${SYSBOX_SHARED_DATA} &>${SYSBOX_SHARED_LOG}/sysbox-fs.log & echo \$! > /run/sysbox/sysbox-fs.pid; sleep 2'
-
-# Stop sysbox-fs first
-ExecStop=/bin/bash -c 'if [ -f /run/sysbox/sysbox-fs.pid ]; then kill \$(cat /run/sysbox/sysbox-fs.pid) 2>/dev/null || true; rm -f /run/sysbox/sysbox-fs.pid; fi; sleep 1'
-
-# Then stop sysbox-mgr
-ExecStopPost=/bin/bash -c 'if [ -f /run/sysbox/sysbox-mgr.pid ]; then kill \$(cat /run/sysbox/sysbox-mgr.pid) 2>/dev/null || true; rm -f /run/sysbox/sysbox-mgr.pid; fi'
-
-TimeoutStartSec=60
-TimeoutStopSec=30
-Restart=on-failure
-RestartSec=5
-
-LimitNPROC=infinity
-LimitCORE=infinity
-LimitNOFILE=infinity
-
-[Install]
-WantedBy=multi-user.target
-SYSBOXSERVICEEOF
-        chmod 644 "$SYSBOX_SERVICE_FILE"
-        systemctl enable "${SYSBOX_SERVICE_NAME}.service"
-        echo "  created and enabled ${SYSBOX_SERVICE_FILE}"
-    fi
-
-    # --- 2. Install docker service ---
-    echo "Installing ${SERVICE_NAME}.service..."
+    echo "Installing ${SERVICE_NAME}.service (with per-instance sysbox)..."
 
     cat > "$SERVICE_FILE" <<SERVICEEOF
 [Unit]
 Description=Dockyard Docker (${SERVICE_NAME})
-After=network-online.target nss-lookup.target firewalld.service ${SYSBOX_SERVICE_NAME}.service time-set.target
+After=network-online.target nss-lookup.target firewalld.service time-set.target
 Before=docker.service
 Wants=network-online.target
-Requires=${SYSBOX_SERVICE_NAME}.service
 StartLimitBurst=3
 StartLimitIntervalSec=60
 
@@ -673,8 +602,8 @@ StartLimitIntervalSec=60
 Type=forking
 PIDFile=${EXEC_ROOT}/dockerd.pid
 
-# Create directories
-ExecStartPre=/bin/mkdir -p ${LOG_DIR} ${RUN_DIR} ${EXEC_ROOT}/containerd ${DOCKER_DATA}/containerd
+# Create runtime and sysbox directories
+ExecStartPre=/bin/mkdir -p ${LOG_DIR} ${RUN_DIR} ${EXEC_ROOT}/containerd ${DOCKER_DATA}/containerd ${SYSBOX_RUN_DIR} ${SYSBOX_DATA_DIR}
 
 # Clean stale sockets
 ExecStartPre=-/bin/rm -f ${CONTAINERD_SOCKET} ${DOCKER_SOCKET}
@@ -691,6 +620,12 @@ ExecStartPre=/bin/bash -c 'iptables -I FORWARD -i ${BRIDGE} -o ${BRIDGE} -j ACCE
 # Add iptables rules for user-defined networks (from default-address-pool)
 ExecStartPre=/bin/bash -c 'iptables -I FORWARD -s ${DOCKYARD_POOL_BASE} -j ACCEPT && iptables -I FORWARD -d ${DOCKYARD_POOL_BASE} -j ACCEPT && iptables -t nat -I POSTROUTING -s ${DOCKYARD_POOL_BASE} -j MASQUERADE'
 
+# Start sysbox-mgr and wait for socket
+ExecStartPre=/bin/bash -c '${BIN_DIR}/sysbox-mgr --run-dir ${SYSBOX_RUN_DIR} --data-root ${SYSBOX_DATA_DIR} &>${LOG_DIR}/sysbox-mgr.log & echo \$! > ${SYSBOX_RUN_DIR}/sysbox-mgr.pid; i=0; while [ ! -e ${SYSBOX_RUN_DIR}/sysmgr.sock ]; do sleep 1; i=\$((i+1)); if [ \$i -ge 30 ]; then echo "sysbox-mgr did not start within 30s" >&2; exit 1; fi; done'
+
+# Start sysbox-fs and wait for socket
+ExecStartPre=/bin/bash -c '${BIN_DIR}/sysbox-fs --run-dir ${SYSBOX_RUN_DIR} --mountpoint ${SYSBOX_DATA_DIR} &>${LOG_DIR}/sysbox-fs.log & echo \$! > ${SYSBOX_RUN_DIR}/sysbox-fs.pid; i=0; while [ ! -e ${SYSBOX_RUN_DIR}/sysfs.sock ]; do sleep 1; i=\$((i+1)); if [ \$i -ge 30 ]; then echo "sysbox-fs did not start within 30s" >&2; exit 1; fi; done'
+
 # Start containerd and wait for socket
 ExecStartPre=/bin/bash -c '${BIN_DIR}/containerd --root ${DOCKER_DATA}/containerd --state ${EXEC_ROOT}/containerd --address ${CONTAINERD_SOCKET} &>${LOG_DIR}/containerd.log & echo \$! > ${RUN_DIR}/containerd.pid; i=0; while [ ! -e ${CONTAINERD_SOCKET} ]; do sleep 1; i=\$((i+1)); if [ \$i -ge 30 ]; then echo "containerd did not start within 30s" >&2; exit 1; fi; done'
 
@@ -698,7 +633,7 @@ ExecStartPre=/bin/bash -c '${BIN_DIR}/containerd --root ${DOCKER_DATA}/container
 ExecStart=/bin/bash -c '${BIN_DIR}/dockerd --config-file ${ETC_DIR}/daemon.json --containerd ${CONTAINERD_SOCKET} --data-root ${DOCKER_DATA} --exec-root ${EXEC_ROOT} --pidfile ${EXEC_ROOT}/dockerd.pid --bridge ${BRIDGE} --fixed-cidr ${DOCKYARD_FIXED_CIDR} --default-address-pool base=${DOCKYARD_POOL_BASE},size=${DOCKYARD_POOL_SIZE} --host unix://${DOCKER_SOCKET} --iptables=false --group ${INSTANCE_GROUP} &>${LOG_DIR}/dockerd.log & i=0; while [ ! -e ${DOCKER_SOCKET} ]; do sleep 1; i=\$((i+1)); if [ \$i -ge 30 ]; then echo "dockerd did not start within 30s" >&2; exit 1; fi; done'
 
 # Start DinD ownership watcher (fixes sysbox uid mapping for Docker 29+)
-ExecStartPost=/bin/bash -c 'SYSBOX_UID_OFFSET=\$(awk -F: '"'"'\$1=="sysbox"{print \$2;exit}'"'"' /etc/subuid 2>/dev/null || echo 231072); SYSBOX_DOCKER_DIR=${SYSBOX_SHARED_DATA}/docker; mkdir -p "\$SYSBOX_DOCKER_DIR"; find "\$SYSBOX_DOCKER_DIR" -maxdepth 1 -mindepth 1 -uid 0 -exec chown "\${SYSBOX_UID_OFFSET}:\${SYSBOX_UID_OFFSET}" {} \; 2>/dev/null || true; (while true; do for d in "\$SYSBOX_DOCKER_DIR"/*/; do [ -d "\$d" ] || continue; uid=\$(stat -c "%u" "\$d" 2>/dev/null) || continue; [ "\$uid" = "0" ] && chown "\${SYSBOX_UID_OFFSET}:\${SYSBOX_UID_OFFSET}" "\$d" 2>/dev/null; done; sleep 1; done) & echo \$! > ${RUN_DIR}/dind-watcher.pid'
+ExecStartPost=/bin/bash -c 'SYSBOX_UID_OFFSET=\$(awk -F: '"'"'\$1=="sysbox"{print \$2;exit}'"'"' /etc/subuid 2>/dev/null || echo 231072); SYSBOX_DOCKER_DIR=${SYSBOX_DATA_DIR}/docker; mkdir -p "\$SYSBOX_DOCKER_DIR"; find "\$SYSBOX_DOCKER_DIR" -maxdepth 1 -mindepth 1 -uid 0 -exec chown "\${SYSBOX_UID_OFFSET}:\${SYSBOX_UID_OFFSET}" {} \; 2>/dev/null || true; (while true; do for d in "\$SYSBOX_DOCKER_DIR"/*/; do [ -d "\$d" ] || continue; uid=\$(stat -c "%u" "\$d" 2>/dev/null) || continue; [ "\$uid" = "0" ] && chown "\${SYSBOX_UID_OFFSET}:\${SYSBOX_UID_OFFSET}" "\$d" 2>/dev/null; done; sleep 1; done) & echo \$! > ${RUN_DIR}/dind-watcher.pid'
 
 # Kill DinD watcher on stop
 ExecStopPost=-/bin/bash -c 'kill \$(cat ${RUN_DIR}/dind-watcher.pid 2>/dev/null) 2>/dev/null || true; rm -f ${RUN_DIR}/dind-watcher.pid'
@@ -706,7 +641,7 @@ ExecStopPost=-/bin/bash -c 'kill \$(cat ${RUN_DIR}/dind-watcher.pid 2>/dev/null)
 # Stop containerd
 ExecStopPost=-/bin/bash -c 'if [ -f ${RUN_DIR}/containerd.pid ]; then kill \$(cat ${RUN_DIR}/containerd.pid) 2>/dev/null; rm -f ${RUN_DIR}/containerd.pid; fi'
 
-# Clean up sockets
+# Clean up docker/containerd sockets
 ExecStopPost=-/bin/rm -f ${DOCKER_SOCKET} ${CONTAINERD_SOCKET}
 
 # Remove iptables rules (bridge)
@@ -717,6 +652,15 @@ ExecStopPost=-/bin/bash -c 'iptables -D FORWARD -s ${DOCKYARD_POOL_BASE} -j ACCE
 
 # Remove bridge
 ExecStopPost=-/bin/bash -c 'if ip link show ${BRIDGE} &>/dev/null; then ip link set ${BRIDGE} down 2>/dev/null; ip link delete ${BRIDGE} 2>/dev/null; fi'
+
+# Stop sysbox-fs
+ExecStopPost=-/bin/bash -c 'if [ -f ${SYSBOX_RUN_DIR}/sysbox-fs.pid ]; then kill \$(cat ${SYSBOX_RUN_DIR}/sysbox-fs.pid) 2>/dev/null || true; rm -f ${SYSBOX_RUN_DIR}/sysbox-fs.pid; fi'
+
+# Stop sysbox-mgr
+ExecStopPost=-/bin/bash -c 'if [ -f ${SYSBOX_RUN_DIR}/sysbox-mgr.pid ]; then kill \$(cat ${SYSBOX_RUN_DIR}/sysbox-mgr.pid) 2>/dev/null || true; rm -f ${SYSBOX_RUN_DIR}/sysbox-mgr.pid; fi'
+
+# Clean up sysbox run dir
+ExecStopPost=-/bin/rm -rf ${SYSBOX_RUN_DIR}
 
 TimeoutStartSec=60
 TimeoutStopSec=30
@@ -739,20 +683,16 @@ SERVICEEOF
     systemctl enable "${SERVICE_NAME}.service"
     echo "  enabled ${SERVICE_NAME}.service (will start on boot)"
     echo ""
-    echo "  sudo systemctl start ${SERVICE_NAME}    # start (starts sysbox automatically)"
-    echo "  sudo systemctl status ${SERVICE_NAME}   # check docker status"
-    echo "  sudo systemctl status ${SYSBOX_SERVICE_NAME}  # check sysbox status"
-    echo "  sudo journalctl -u ${SERVICE_NAME} -f   # follow docker logs"
-    echo "  sudo journalctl -u ${SYSBOX_SERVICE_NAME} -f # follow sysbox logs"
+    echo "  sudo systemctl start ${SERVICE_NAME}    # start"
+    echo "  sudo systemctl status ${SERVICE_NAME}   # check status"
+    echo "  sudo journalctl -u ${SERVICE_NAME} -f   # follow logs"
 }
 
 cmd_disable() {
     require_root
 
     local SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
-    local SYSBOX_SERVICE_FILE="/etc/systemd/system/${SYSBOX_SERVICE_NAME}.service"
 
-    # Stop and disable docker service
     if [ -f "$SERVICE_FILE" ]; then
         if systemctl is-active --quiet "${SERVICE_NAME}.service"; then
             echo "Stopping ${SERVICE_NAME}..."
@@ -767,27 +707,6 @@ cmd_disable() {
         echo "Removed ${SERVICE_FILE}"
     else
         echo "Warning: ${SERVICE_FILE} does not exist." >&2
-    fi
-
-    # Stop and disable shared sysbox service only if no other dockyard docker services remain
-    # (SERVICE_NAME file was already removed above, so count remaining *_docker.service files)
-    # Use 'find' instead of 'ls glob | wc' to avoid pipefail exit when no files match.
-    local remaining_docker
-    remaining_docker=$(find /etc/systemd/system -maxdepth 1 -name '*_docker.service' 2>/dev/null | wc -l)
-    if [ "$remaining_docker" -eq 0 ] && [ -f "$SYSBOX_SERVICE_FILE" ]; then
-        echo "Last dockyard instance — stopping shared ${SYSBOX_SERVICE_NAME}..."
-        if systemctl is-active --quiet "${SYSBOX_SERVICE_NAME}.service"; then
-            systemctl stop "${SYSBOX_SERVICE_NAME}.service"
-            echo "  stopped"
-        fi
-        if systemctl is-enabled --quiet "${SYSBOX_SERVICE_NAME}.service" 2>/dev/null; then
-            systemctl disable "${SYSBOX_SERVICE_NAME}.service"
-            echo "  disabled"
-        fi
-        rm -f "$SYSBOX_SERVICE_FILE"
-        echo "Removed ${SYSBOX_SERVICE_FILE}"
-    elif [ "$remaining_docker" -gt 0 ]; then
-        echo "  ${remaining_docker} other dockyard instance(s) still active — keeping ${SYSBOX_SERVICE_NAME}.service"
     fi
 
     systemctl daemon-reload
@@ -825,57 +744,36 @@ cmd_start() {
         exit 1
     }
 
-    # --- 1. Start shared sysbox daemons (ref-counted, one instance per host) ---
-    mkdir -p /run/sysbox
+    # --- 1. Start per-instance sysbox daemons ---
+    mkdir -p "$SYSBOX_RUN_DIR" "$SYSBOX_DATA_DIR"
 
-    local SYSBOX_COUNT
-    SYSBOX_COUNT=$(sysbox_acquire)
-    echo "Sysbox refcount after acquire: ${SYSBOX_COUNT}"
+    echo "Starting sysbox-mgr..."
+    "${BIN_DIR}/sysbox-mgr" --run-dir "${SYSBOX_RUN_DIR}" --data-root "${SYSBOX_DATA_DIR}" \
+        &>"${LOG_DIR}/sysbox-mgr.log" &
+    SYSBOX_MGR_PID=$!
+    echo "$SYSBOX_MGR_PID" > "${SYSBOX_RUN_DIR}/sysbox-mgr.pid"
+    STARTED_PIDS+=("$SYSBOX_MGR_PID")
+    wait_for_file "${SYSBOX_RUN_DIR}/sysmgr.sock" "sysbox-mgr" 30 || cleanup
+    echo "  sysbox-mgr ready (pid ${SYSBOX_MGR_PID})"
 
-    if [ "$SYSBOX_COUNT" -eq 1 ]; then
-        echo "Starting shared sysbox daemons (first dockyard instance on this host)..."
-        mkdir -p "$SYSBOX_SHARED_DATA" "$SYSBOX_SHARED_LOG"
-
-        echo "  Starting sysbox-mgr..."
-        "${SYSBOX_SHARED_BIN}/sysbox-mgr" --data-root "${SYSBOX_SHARED_DATA}" \
-            &>"${SYSBOX_SHARED_LOG}/sysbox-mgr.log" &
-        SYSBOX_MGR_PID=$!
-        echo "$SYSBOX_MGR_PID" > "/run/sysbox/sysbox-mgr.pid"
-        STARTED_PIDS+=("$SYSBOX_MGR_PID")
-        sleep 2
-        if ! kill -0 "$SYSBOX_MGR_PID" 2>/dev/null; then
-            sysbox_release >/dev/null
-            echo "Error: sysbox-mgr failed to start" >&2
-            cleanup
-        fi
-        echo "  sysbox-mgr ready (pid ${SYSBOX_MGR_PID})"
-
-        echo "  Starting sysbox-fs..."
-        "${SYSBOX_SHARED_BIN}/sysbox-fs" --mountpoint "${SYSBOX_SHARED_DATA}" \
-            &>"${SYSBOX_SHARED_LOG}/sysbox-fs.log" &
-        SYSBOX_FS_PID=$!
-        echo "$SYSBOX_FS_PID" > "/run/sysbox/sysbox-fs.pid"
-        STARTED_PIDS+=("$SYSBOX_FS_PID")
-        sleep 2
-        if ! kill -0 "$SYSBOX_FS_PID" 2>/dev/null; then
-            sysbox_release >/dev/null
-            echo "Error: sysbox-fs failed to start" >&2
-            cleanup
-        fi
-        echo "  sysbox-fs ready (pid ${SYSBOX_FS_PID})"
-    else
-        echo "  Shared sysbox already running (refcount=${SYSBOX_COUNT})"
-    fi
+    echo "Starting sysbox-fs..."
+    "${BIN_DIR}/sysbox-fs" --run-dir "${SYSBOX_RUN_DIR}" --mountpoint "${SYSBOX_DATA_DIR}" \
+        &>"${LOG_DIR}/sysbox-fs.log" &
+    SYSBOX_FS_PID=$!
+    echo "$SYSBOX_FS_PID" > "${SYSBOX_RUN_DIR}/sysbox-fs.pid"
+    STARTED_PIDS+=("$SYSBOX_FS_PID")
+    wait_for_file "${SYSBOX_RUN_DIR}/sysfs.sock" "sysbox-fs" 30 || cleanup
+    echo "  sysbox-fs ready (pid ${SYSBOX_FS_PID})"
 
     # --- 1b. DinD ownership watcher ---
     # Sysbox creates each container's /var/lib/docker backing dir at
-    # ${DOCKYARD_ROOT}/sysbox/docker/<id> owned by root:root.
+    # ${SYSBOX_DATA_DIR}/docker/<id> owned by root:root.
     # The container's uid namespace maps uid 0 → SYSBOX_UID_OFFSET, so container
     # root can't access a root-owned directory.  Docker 29+ makes chmod on the
     # data-root fatal, so DinD breaks on every new container.
     # Fix: read the actual sysbox uid offset and chown each backing dir to it.
     SYSBOX_UID_OFFSET=$(awk -F: '$1=="sysbox" {print $2; exit}' /etc/subuid 2>/dev/null || echo 231072)
-    SYSBOX_DOCKER_DIR="${SYSBOX_SHARED_DATA}/docker"
+    SYSBOX_DOCKER_DIR="${SYSBOX_DATA_DIR}/docker"
 
     # Fix any dirs left over from before this watcher existed (e.g. after reinstall).
     find "$SYSBOX_DOCKER_DIR" -maxdepth 1 -mindepth 1 -uid 0 \
@@ -977,21 +875,12 @@ cmd_stop() {
         rm -f "${RUN_DIR}/dind-watcher.pid"
     fi
 
-    # Reverse startup order: dockerd -> containerd -> sysbox (ref-counted)
+    # Reverse startup order: dockerd -> containerd -> sysbox
     stop_daemon dockerd "${EXEC_ROOT}/dockerd.pid" 20
     stop_daemon containerd "${RUN_DIR}/containerd.pid" 10
-
-    local SYSBOX_COUNT
-    SYSBOX_COUNT=$(sysbox_release)
-    echo "Sysbox refcount after release: ${SYSBOX_COUNT}"
-    if [ "$SYSBOX_COUNT" -eq 0 ]; then
-        echo "Last dockyard instance stopping — shutting down shared sysbox..."
-        stop_daemon sysbox-fs "/run/sysbox/sysbox-fs.pid" 10
-        stop_daemon sysbox-mgr "/run/sysbox/sysbox-mgr.pid" 10
-        rm -f "$SYSBOX_REFCOUNT"
-    else
-        echo "  Sysbox still in use (refcount=${SYSBOX_COUNT}), leaving running"
-    fi
+    stop_daemon sysbox-fs "${SYSBOX_RUN_DIR}/sysbox-fs.pid" 10
+    stop_daemon sysbox-mgr "${SYSBOX_RUN_DIR}/sysbox-mgr.pid" 10
+    rm -rf "$SYSBOX_RUN_DIR"
 
     # Clean up sockets
     rm -f "$DOCKER_SOCKET" "$CONTAINERD_SOCKET"
@@ -1044,13 +933,6 @@ cmd_status() {
 
     # --- systemd services ---
     local SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
-    local SYSBOX_SERVICE_FILE="/etc/systemd/system/${SYSBOX_SERVICE_NAME}.service"
-
-    if [ -f "$SYSBOX_SERVICE_FILE" ]; then
-        echo "systemd (sysbox): $(systemctl is-active "${SYSBOX_SERVICE_NAME}.service" 2>/dev/null || echo "unknown") ($(systemctl is-enabled "${SYSBOX_SERVICE_NAME}.service" 2>/dev/null || echo "unknown"))"
-    else
-        echo "systemd (sysbox): not installed"
-    fi
 
     if [ -f "$SERVICE_FILE" ]; then
         echo "systemd (docker): $(systemctl is-active "${SERVICE_NAME}.service" 2>/dev/null || echo "unknown") ($(systemctl is-enabled "${SERVICE_NAME}.service" 2>/dev/null || echo "unknown"))"
@@ -1075,8 +957,8 @@ cmd_status() {
         fi
     }
 
-    check_pid "sysbox-mgr" "/run/sysbox/sysbox-mgr.pid"
-    check_pid "sysbox-fs " "/run/sysbox/sysbox-fs.pid"
+    check_pid "sysbox-mgr" "${SYSBOX_RUN_DIR}/sysbox-mgr.pid"
+    check_pid "sysbox-fs " "${SYSBOX_RUN_DIR}/sysbox-fs.pid"
     check_pid "containerd" "${RUN_DIR}/containerd.pid"
     check_pid "dockerd   " "${EXEC_ROOT}/dockerd.pid"
 
@@ -1133,15 +1015,14 @@ cmd_destroy() {
     require_root
 
     local SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
-    local SYSBOX_SERVICE_FILE="/etc/systemd/system/${SYSBOX_SERVICE_NAME}.service"
 
     echo "This will remove all installed dockyard docker files:"
     echo "  ${SERVICE_FILE}              (docker systemd service)"
     echo "  ${RUNTIME_DIR}/    (binaries, config, logs, pids)"
     echo "  ${DOCKER_DATA}/            (images, containers, volumes)"
+    echo "  ${SYSBOX_DATA_DIR}/        (sysbox data)"
     echo "  ${DOCKER_SOCKET}        (socket)"
     echo "  ${EXEC_ROOT}/                         (runtime state)"
-    echo "  (shared sysbox resources removed only if this is the last instance)"
     echo ""
     if [[ "$YES" != true ]]; then
         read -p "Continue? [y/N] " confirm
@@ -1151,11 +1032,11 @@ cmd_destroy() {
         fi
     fi
 
-    # --- 1. Stop and remove systemd services (or stop daemons directly) ---
-    if [ -f "$SERVICE_FILE" ] || [ -f "$SYSBOX_SERVICE_FILE" ]; then
+    # --- 1. Stop and remove systemd service (or stop daemons directly) ---
+    if [ -f "$SERVICE_FILE" ]; then
         cmd_disable
     else
-        # No systemd services — stop daemons directly
+        # No systemd service — stop daemons directly
         # Kill DinD watcher
         if [ -f "${RUN_DIR}/dind-watcher.pid" ]; then
             kill "$(cat "${RUN_DIR}/dind-watcher.pid")" 2>/dev/null || true
@@ -1172,14 +1053,9 @@ cmd_destroy() {
                 rm -f "$pidfile"
             fi
         done
-        # Release shared sysbox ref-count; stop if last
-        local sysbox_count
-        sysbox_count=$(sysbox_release)
-        if [ "$sysbox_count" -eq 0 ]; then
-            stop_daemon sysbox-fs "/run/sysbox/sysbox-fs.pid" 10
-            stop_daemon sysbox-mgr "/run/sysbox/sysbox-mgr.pid" 10
-            rm -f "$SYSBOX_REFCOUNT"
-        fi
+        stop_daemon sysbox-fs "${SYSBOX_RUN_DIR}/sysbox-fs.pid" 10
+        stop_daemon sysbox-mgr "${SYSBOX_RUN_DIR}/sysbox-mgr.pid" 10
+        rm -rf "$SYSBOX_RUN_DIR"
         rm -f "$DOCKER_SOCKET" "$CONTAINERD_SOCKET"
         if ip link show "$BRIDGE" &>/dev/null; then
             ip link set "$BRIDGE" down 2>/dev/null || true
@@ -1215,30 +1091,25 @@ cmd_destroy() {
         echo "Removed ${DOCKER_DATA}/"
     fi
 
-    # --- 6. Remove shared sysbox resources if this was the last instance ---
-    # In systemd mode: cmd_disable removed the shared service file if last instance.
-    # In non-systemd mode: refcount file is gone (sysbox_release set it to 0).
-    local shared_sysbox_last=false
-    if [ ! -f "/etc/systemd/system/${SYSBOX_SERVICE_NAME}.service" ]; then
-        local refcount_val
-        refcount_val=$(cat "$SYSBOX_REFCOUNT" 2>/dev/null || echo "0")
-        if [ "$refcount_val" -le 0 ]; then
-            shared_sysbox_last=true
-        fi
+    # --- 6. Remove per-instance sysbox data ---
+    if [ -d "$SYSBOX_DATA_DIR" ]; then
+        rm -rf "$SYSBOX_DATA_DIR"
+        echo "Removed ${SYSBOX_DATA_DIR}/ (sysbox data)"
     fi
-    if [ "$shared_sysbox_last" = true ]; then
-        if [ -d "$SYSBOX_SHARED_DATA" ]; then
-            rm -rf "$SYSBOX_SHARED_DATA"
-            echo "Removed ${SYSBOX_SHARED_DATA}/ (shared sysbox data)"
+
+    # --- 6b. Remove AppArmor fusermount3 entry for this instance ---
+    local apparmor_file="/etc/apparmor.d/local/fusermount3"
+    local apparmor_begin="# dockyard:${DOCKYARD_DOCKER_PREFIX}:begin"
+    if grep -qF "$apparmor_begin" "$apparmor_file" 2>/dev/null; then
+        awk -v start="$apparmor_begin" \
+            -v stop="# dockyard:${DOCKYARD_DOCKER_PREFIX}:end" \
+            '$0 == start { skip=1 } skip { if ($0 == stop) { skip=0 }; next } { print }' \
+            "$apparmor_file" > "${apparmor_file}.tmp" \
+            && mv "${apparmor_file}.tmp" "$apparmor_file"
+        if [ -f /etc/apparmor.d/fusermount3 ]; then
+            apparmor_parser -r /etc/apparmor.d/fusermount3 2>/dev/null || true
         fi
-        if [ -d "$SYSBOX_SHARED_BIN" ]; then
-            rm -rf "$SYSBOX_SHARED_BIN"
-            echo "Removed ${SYSBOX_SHARED_BIN}/ (shared sysbox binaries)"
-        fi
-        if [ -d "$SYSBOX_SHARED_LOG" ]; then
-            rm -rf "$SYSBOX_SHARED_LOG"
-            echo "Removed ${SYSBOX_SHARED_LOG}/ (shared sysbox logs)"
-        fi
+        echo "Removed AppArmor fusermount3 entry for ${DOCKYARD_DOCKER_PREFIX}"
     fi
 
     # --- 7. Remove env file ---

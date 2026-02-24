@@ -30,57 +30,36 @@ cmd_start() {
         exit 1
     }
 
-    # --- 1. Start shared sysbox daemons (ref-counted, one instance per host) ---
-    mkdir -p /run/sysbox
+    # --- 1. Start per-instance sysbox daemons ---
+    mkdir -p "$SYSBOX_RUN_DIR" "$SYSBOX_DATA_DIR"
 
-    local SYSBOX_COUNT
-    SYSBOX_COUNT=$(sysbox_acquire)
-    echo "Sysbox refcount after acquire: ${SYSBOX_COUNT}"
+    echo "Starting sysbox-mgr..."
+    "${BIN_DIR}/sysbox-mgr" --run-dir "${SYSBOX_RUN_DIR}" --data-root "${SYSBOX_DATA_DIR}" \
+        &>"${LOG_DIR}/sysbox-mgr.log" &
+    SYSBOX_MGR_PID=$!
+    echo "$SYSBOX_MGR_PID" > "${SYSBOX_RUN_DIR}/sysbox-mgr.pid"
+    STARTED_PIDS+=("$SYSBOX_MGR_PID")
+    wait_for_file "${SYSBOX_RUN_DIR}/sysmgr.sock" "sysbox-mgr" 30 || cleanup
+    echo "  sysbox-mgr ready (pid ${SYSBOX_MGR_PID})"
 
-    if [ "$SYSBOX_COUNT" -eq 1 ]; then
-        echo "Starting shared sysbox daemons (first dockyard instance on this host)..."
-        mkdir -p "$SYSBOX_SHARED_DATA" "$SYSBOX_SHARED_LOG"
-
-        echo "  Starting sysbox-mgr..."
-        "${SYSBOX_SHARED_BIN}/sysbox-mgr" --data-root "${SYSBOX_SHARED_DATA}" \
-            &>"${SYSBOX_SHARED_LOG}/sysbox-mgr.log" &
-        SYSBOX_MGR_PID=$!
-        echo "$SYSBOX_MGR_PID" > "/run/sysbox/sysbox-mgr.pid"
-        STARTED_PIDS+=("$SYSBOX_MGR_PID")
-        sleep 2
-        if ! kill -0 "$SYSBOX_MGR_PID" 2>/dev/null; then
-            sysbox_release >/dev/null
-            echo "Error: sysbox-mgr failed to start" >&2
-            cleanup
-        fi
-        echo "  sysbox-mgr ready (pid ${SYSBOX_MGR_PID})"
-
-        echo "  Starting sysbox-fs..."
-        "${SYSBOX_SHARED_BIN}/sysbox-fs" --mountpoint "${SYSBOX_SHARED_DATA}" \
-            &>"${SYSBOX_SHARED_LOG}/sysbox-fs.log" &
-        SYSBOX_FS_PID=$!
-        echo "$SYSBOX_FS_PID" > "/run/sysbox/sysbox-fs.pid"
-        STARTED_PIDS+=("$SYSBOX_FS_PID")
-        sleep 2
-        if ! kill -0 "$SYSBOX_FS_PID" 2>/dev/null; then
-            sysbox_release >/dev/null
-            echo "Error: sysbox-fs failed to start" >&2
-            cleanup
-        fi
-        echo "  sysbox-fs ready (pid ${SYSBOX_FS_PID})"
-    else
-        echo "  Shared sysbox already running (refcount=${SYSBOX_COUNT})"
-    fi
+    echo "Starting sysbox-fs..."
+    "${BIN_DIR}/sysbox-fs" --run-dir "${SYSBOX_RUN_DIR}" --mountpoint "${SYSBOX_DATA_DIR}" \
+        &>"${LOG_DIR}/sysbox-fs.log" &
+    SYSBOX_FS_PID=$!
+    echo "$SYSBOX_FS_PID" > "${SYSBOX_RUN_DIR}/sysbox-fs.pid"
+    STARTED_PIDS+=("$SYSBOX_FS_PID")
+    wait_for_file "${SYSBOX_RUN_DIR}/sysfs.sock" "sysbox-fs" 30 || cleanup
+    echo "  sysbox-fs ready (pid ${SYSBOX_FS_PID})"
 
     # --- 1b. DinD ownership watcher ---
     # Sysbox creates each container's /var/lib/docker backing dir at
-    # ${DOCKYARD_ROOT}/sysbox/docker/<id> owned by root:root.
+    # ${SYSBOX_DATA_DIR}/docker/<id> owned by root:root.
     # The container's uid namespace maps uid 0 → SYSBOX_UID_OFFSET, so container
     # root can't access a root-owned directory.  Docker 29+ makes chmod on the
     # data-root fatal, so DinD breaks on every new container.
     # Fix: read the actual sysbox uid offset and chown each backing dir to it.
     SYSBOX_UID_OFFSET=$(awk -F: '$1=="sysbox" {print $2; exit}' /etc/subuid 2>/dev/null || echo 231072)
-    SYSBOX_DOCKER_DIR="${SYSBOX_SHARED_DATA}/docker"
+    SYSBOX_DOCKER_DIR="${SYSBOX_DATA_DIR}/docker"
 
     # Fix any dirs left over from before this watcher existed (e.g. after reinstall).
     find "$SYSBOX_DOCKER_DIR" -maxdepth 1 -mindepth 1 -uid 0 \

@@ -60,11 +60,7 @@ derive_vars() {
     INSTANCE_USER="${DOCKYARD_DOCKER_PREFIX}docker"
     INSTANCE_GROUP="${DOCKYARD_DOCKER_PREFIX}docker"
 
-    # Shared sysbox daemon (one per host, not per instance)
-    SYSBOX_SERVICE_NAME="dockyard-sysbox"
-    SYSBOX_SHARED_BIN="/usr/local/lib/dockyard"
-    SYSBOX_SHARED_DATA="/var/lib/dockyard-sysbox"
-    SYSBOX_SHARED_LOG="/var/log/dockyard-sysbox"
-    SYSBOX_REFCOUNT="/run/sysbox/dockyard-refcount"
-    SYSBOX_REFCOUNT_LOCK="/run/sysbox/dockyard-refcount.lock"
+    # Per-instance sysbox daemons (separate sysbox-mgr + sysbox-fs per installation)
+    SYSBOX_RUN_DIR="${DOCKYARD_ROOT}/sysbox-run"
+    SYSBOX_DATA_DIR="${DOCKYARD_ROOT}/sysbox"
 }

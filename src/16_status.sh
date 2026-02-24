@@ -23,13 +23,6 @@ cmd_status() {
 
     # --- systemd services ---
     local SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
-    local SYSBOX_SERVICE_FILE="/etc/systemd/system/${SYSBOX_SERVICE_NAME}.service"
-
-    if [ -f "$SYSBOX_SERVICE_FILE" ]; then
-        echo "systemd (sysbox): $(systemctl is-active "${SYSBOX_SERVICE_NAME}.service" 2>/dev/null || echo "unknown") ($(systemctl is-enabled "${SYSBOX_SERVICE_NAME}.service" 2>/dev/null || echo "unknown"))"
-    else
-        echo "systemd (sysbox): not installed"
-    fi
 
     if [ -f "$SERVICE_FILE" ]; then
         echo "systemd (docker): $(systemctl is-active "${SERVICE_NAME}.service" 2>/dev/null || echo "unknown") ($(systemctl is-enabled "${SERVICE_NAME}.service" 2>/dev/null || echo "unknown"))"
@@ -54,8 +47,8 @@ cmd_status() {
         fi
     }
 
-    check_pid "sysbox-mgr" "/run/sysbox/sysbox-mgr.pid"
-    check_pid "sysbox-fs " "/run/sysbox/sysbox-fs.pid"
+    check_pid "sysbox-mgr" "${SYSBOX_RUN_DIR}/sysbox-mgr.pid"
+    check_pid "sysbox-fs " "${SYSBOX_RUN_DIR}/sysbox-fs.pid"
     check_pid "containerd" "${RUN_DIR}/containerd.pid"
     check_pid "dockerd   " "${EXEC_ROOT}/dockerd.pid"
 

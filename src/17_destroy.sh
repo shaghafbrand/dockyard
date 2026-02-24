@@ -10,15 +10,14 @@ cmd_destroy() {
     require_root
 
     local SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
-    local SYSBOX_SERVICE_FILE="/etc/systemd/system/${SYSBOX_SERVICE_NAME}.service"
 
     echo "This will remove all installed dockyard docker files:"
     echo "  ${SERVICE_FILE}              (docker systemd service)"
     echo "  ${RUNTIME_DIR}/    (binaries, config, logs, pids)"
     echo "  ${DOCKER_DATA}/            (images, containers, volumes)"
+    echo "  ${SYSBOX_DATA_DIR}/        (sysbox data)"
     echo "  ${DOCKER_SOCKET}        (socket)"
     echo "  ${EXEC_ROOT}/                         (runtime state)"
-    echo "  (shared sysbox resources removed only if this is the last instance)"
     echo ""
     if [[ "$YES" != true ]]; then
         read -p "Continue? [y/N] " confirm
@@ -28,11 +27,11 @@ cmd_destroy() {
         fi
     fi
 
-    # --- 1. Stop and remove systemd services (or stop daemons directly) ---
-    if [ -f "$SERVICE_FILE" ] || [ -f "$SYSBOX_SERVICE_FILE" ]; then
+    # --- 1. Stop and remove systemd service (or stop daemons directly) ---
+    if [ -f "$SERVICE_FILE" ]; then
         cmd_disable
     else
-        # No systemd services — stop daemons directly
+        # No systemd service — stop daemons directly
         # Kill DinD watcher
         if [ -f "${RUN_DIR}/dind-watcher.pid" ]; then
             kill "$(cat "${RUN_DIR}/dind-watcher.pid")" 2>/dev/null || true
@@ -49,14 +48,9 @@ cmd_destroy() {
                 rm -f "$pidfile"
             fi
         done
-        # Release shared sysbox ref-count; stop if last
-        local sysbox_count
-        sysbox_count=$(sysbox_release)
-        if [ "$sysbox_count" -eq 0 ]; then
-            stop_daemon sysbox-fs "/run/sysbox/sysbox-fs.pid" 10
-            stop_daemon sysbox-mgr "/run/sysbox/sysbox-mgr.pid" 10
-            rm -f "$SYSBOX_REFCOUNT"
-        fi
+        stop_daemon sysbox-fs "${SYSBOX_RUN_DIR}/sysbox-fs.pid" 10
+        stop_daemon sysbox-mgr "${SYSBOX_RUN_DIR}/sysbox-mgr.pid" 10
+        rm -rf "$SYSBOX_RUN_DIR"
         rm -f "$DOCKER_SOCKET" "$CONTAINERD_SOCKET"
         if ip link show "$BRIDGE" &>/dev/null; then
             ip link set "$BRIDGE" down 2>/dev/null || true
@@ -92,30 +86,25 @@ cmd_destroy() {
         echo "Removed ${DOCKER_DATA}/"
     fi
 
-    # --- 6. Remove shared sysbox resources if this was the last instance ---
-    # In systemd mode: cmd_disable removed the shared service file if last instance.
-    # In non-systemd mode: refcount file is gone (sysbox_release set it to 0).
-    local shared_sysbox_last=false
-    if [ ! -f "/etc/systemd/system/${SYSBOX_SERVICE_NAME}.service" ]; then
-        local refcount_val
-        refcount_val=$(cat "$SYSBOX_REFCOUNT" 2>/dev/null || echo "0")
-        if [ "$refcount_val" -le 0 ]; then
-            shared_sysbox_last=true
-        fi
+    # --- 6. Remove per-instance sysbox data ---
+    if [ -d "$SYSBOX_DATA_DIR" ]; then
+        rm -rf "$SYSBOX_DATA_DIR"
+        echo "Removed ${SYSBOX_DATA_DIR}/ (sysbox data)"
     fi
-    if [ "$shared_sysbox_last" = true ]; then
-        if [ -d "$SYSBOX_SHARED_DATA" ]; then
-            rm -rf "$SYSBOX_SHARED_DATA"
-            echo "Removed ${SYSBOX_SHARED_DATA}/ (shared sysbox data)"
+
+    # --- 6b. Remove AppArmor fusermount3 entry for this instance ---
+    local apparmor_file="/etc/apparmor.d/local/fusermount3"
+    local apparmor_begin="# dockyard:${DOCKYARD_DOCKER_PREFIX}:begin"
+    if grep -qF "$apparmor_begin" "$apparmor_file" 2>/dev/null; then
+        awk -v start="$apparmor_begin" \
+            -v stop="# dockyard:${DOCKYARD_DOCKER_PREFIX}:end" \
+            '$0 == start { skip=1 } skip { if ($0 == stop) { skip=0 }; next } { print }' \
+            "$apparmor_file" > "${apparmor_file}.tmp" \
+            && mv "${apparmor_file}.tmp" "$apparmor_file"
+        if [ -f /etc/apparmor.d/fusermount3 ]; then
+            apparmor_parser -r /etc/apparmor.d/fusermount3 2>/dev/null || true
         fi
-        if [ -d "$SYSBOX_SHARED_BIN" ]; then
-            rm -rf "$SYSBOX_SHARED_BIN"
-            echo "Removed ${SYSBOX_SHARED_BIN}/ (shared sysbox binaries)"
-        fi
-        if [ -d "$SYSBOX_SHARED_LOG" ]; then
-            rm -rf "$SYSBOX_SHARED_LOG"
-            echo "Removed ${SYSBOX_SHARED_LOG}/ (shared sysbox logs)"
-        fi
+        echo "Removed AppArmor fusermount3 entry for ${DOCKYARD_DOCKER_PREFIX}"
     fi
 
     # --- 7. Remove env file ---

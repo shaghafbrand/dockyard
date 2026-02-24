@@ -49,26 +49,24 @@ cmd_create() {
     #   sysbox procfs incompatibility (nestybox/sysbox#973).
     #   Minimum 29.x required for the DinD ownership watcher (commit 2deac51).
     #
-    # SYSBOX_VERSION: 0.6.7 is the last CE release (May 2024). EE archived Aug
-    #   2025. Incompatible with containerd.io ≥ 1.7.28-2 and ≥ 2.x when used
-    #   via apt (does not affect the static binary path used here).
-    #   The inner sandbox image pins containerd.io=1.7.27-1 to stay clear of
-    #   both the 1.7.28-2 runc-1.3.3 issue and the containerd-2.x breakage.
-    #   See Sandcastle issue #56, nestybox/sysbox#973, opencontainers/runc#4968.
+    # SYSBOX_VERSION: 0.6.7.2-tc is a patched fork (github.com/thieso2/sysbox)
+    #   that adds --run-dir to sysbox-mgr, sysbox-fs, and sysbox-runc, allowing
+    #   N independent sysbox instances per host (each with its own socket dir).
+    #   Distributed as a static tarball (no .deb, no dpkg dependency).
     local DOCKER_VERSION="29.2.1"
     local DOCKER_ROOTLESS_VERSION="29.2.1"
-    local SYSBOX_VERSION="0.6.7"
-    local SYSBOX_DEB="sysbox-ce_${SYSBOX_VERSION}-0.linux_amd64.deb"
+    local SYSBOX_VERSION="0.6.7.2-tc"
+    local SYSBOX_TARBALL="sysbox-static-x86_64.tar.gz"
 
     local DOCKER_URL="https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_VERSION}.tgz"
     local DOCKER_ROOTLESS_URL="https://download.docker.com/linux/static/stable/x86_64/docker-rootless-extras-${DOCKER_ROOTLESS_VERSION}.tgz"
-    local SYSBOX_URL="https://downloads.nestybox.com/sysbox/releases/v${SYSBOX_VERSION}/${SYSBOX_DEB}"
+    local SYSBOX_URL="https://github.com/thieso2/sysbox/releases/download/v${SYSBOX_VERSION}/${SYSBOX_TARBALL}"
 
     mkdir -p "$LOG_DIR" "$RUN_DIR" "$ETC_DIR" "$BIN_DIR"
     mkdir -p "$DOCKER_DATA"
     mkdir -p "$CACHE_DIR"
-    mkdir -p /run/sysbox
-    mkdir -p "$SYSBOX_SHARED_BIN" "$SYSBOX_SHARED_DATA" "$SYSBOX_SHARED_LOG"
+    mkdir -p "$SYSBOX_RUN_DIR"
+    mkdir -p "$SYSBOX_DATA_DIR"
 
     # Create system user and group for this instance.
     # dockerd runs as root but creates the socket owned by this group (--group flag),
@@ -87,21 +85,28 @@ cmd_create() {
         echo "  User ${INSTANCE_USER} already exists"
     fi
 
-    # Allow sysbox-fs FUSE mounts at the dockyard sysbox mountpoint.
+    # Allow sysbox-fs FUSE mounts at this instance's sysbox mountpoint.
     # The default fusermount3 AppArmor profile (tightened in Ubuntu 25.10+)
     # only permits FUSE mounts under $HOME, /mnt, /tmp, etc.  Without this
     # override every sysbox container fails with a context-deadline-exceeded
     # RPC error from sysbox-fs.
+    # Each instance appends a tagged block; destroy removes it.
     if [ -d /etc/apparmor.d ]; then
         mkdir -p /etc/apparmor.d/local
-        cat > /etc/apparmor.d/local/fusermount3 <<APPARMOR
-# Allow sysbox-fs FUSE mounts (shared dockyard-sysbox mountpoint)
-mount fstype=fuse options=(nosuid,nodev) options in (ro,rw) -> ${SYSBOX_SHARED_DATA}/**/,
-umount ${SYSBOX_SHARED_DATA}/**/,
-APPARMOR
+        local apparmor_file="/etc/apparmor.d/local/fusermount3"
+        local apparmor_begin="# dockyard:${DOCKYARD_DOCKER_PREFIX}:begin"
+        local apparmor_end="# dockyard:${DOCKYARD_DOCKER_PREFIX}:end"
+        if ! grep -qF "$apparmor_begin" "$apparmor_file" 2>/dev/null; then
+            {
+                echo "$apparmor_begin"
+                echo "mount fstype=fuse options=(nosuid,nodev) options in (ro,rw) -> ${SYSBOX_DATA_DIR}/**/,"
+                echo "umount ${SYSBOX_DATA_DIR}/**/,"
+                echo "$apparmor_end"
+            } >> "$apparmor_file"
+        fi
         if [ -f /etc/apparmor.d/fusermount3 ]; then
             apparmor_parser -r /etc/apparmor.d/fusermount3
-            echo "  AppArmor fusermount3 profile updated"
+            echo "  AppArmor fusermount3 profile updated for ${SYSBOX_DATA_DIR}"
         fi
     fi
 
@@ -129,16 +134,21 @@ APPARMOR
     tar -xzf "${CACHE_DIR}/docker-rootless-extras-${DOCKER_ROOTLESS_VERSION}.tgz" -C "$CACHE_DIR"
     cp -f "${CACHE_DIR}/docker-rootless-extras/"* "$BIN_DIR/"
 
-    echo "Extracting sysbox from .deb..."
-    local SYSBOX_EXTRACT="${CACHE_DIR}/sysbox-extract"
+    echo "Extracting sysbox static binaries..."
+    local SYSBOX_EXTRACT="${CACHE_DIR}/sysbox-static-${SYSBOX_VERSION}"
     mkdir -p "$SYSBOX_EXTRACT"
-    dpkg-deb -x "${CACHE_DIR}/${SYSBOX_DEB}" "$SYSBOX_EXTRACT"
-    # sysbox-runc is per-instance (called by containerd via daemon.json)
-    cp -f "$SYSBOX_EXTRACT/usr/bin/sysbox-runc" "$BIN_DIR/"
-    # sysbox-mgr and sysbox-fs go to the shared location (one daemon per host)
-    cp -f "$SYSBOX_EXTRACT/usr/bin/sysbox-mgr" "$SYSBOX_SHARED_BIN/"
-    cp -f "$SYSBOX_EXTRACT/usr/bin/sysbox-fs" "$SYSBOX_SHARED_BIN/"
-    chmod +x "$SYSBOX_SHARED_BIN/"sysbox-{mgr,fs}
+    tar -xzf "${CACHE_DIR}/${SYSBOX_TARBALL}" -C "$SYSBOX_EXTRACT"
+    # All three binaries go to the per-instance BIN_DIR
+    for bin in sysbox-runc sysbox-mgr sysbox-fs; do
+        local src
+        src=$(find "$SYSBOX_EXTRACT" -name "$bin" -type f | head -1)
+        if [ -z "$src" ]; then
+            echo "Error: $bin not found in ${SYSBOX_TARBALL}" >&2
+            exit 1
+        fi
+        cp -f "$src" "$BIN_DIR/$bin"
+        chmod +x "$BIN_DIR/$bin"
+    done
 
     mkdir -p "${RUNTIME_DIR}/lib/docker"
 
@@ -157,12 +167,15 @@ DOCKEREOF
     echo "Installed binaries to ${BIN_DIR}/"
 
     # Write daemon.json (embedded — no external file dependency)
+    # runtimeArgs passes --run-dir so sysbox-runc connects to the per-instance
+    # sysbox-mgr and sysbox-fs sockets in SYSBOX_RUN_DIR.
     cat > "${ETC_DIR}/daemon.json" <<DAEMONJSONEOF
 {
   "default-runtime": "sysbox-runc",
   "runtimes": {
     "sysbox-runc": {
-      "path": "${BIN_DIR}/sysbox-runc"
+      "path": "${BIN_DIR}/sysbox-runc",
+      "runtimeArgs": ["--run-dir", "${SYSBOX_RUN_DIR}"]
     }
   },
   "storage-driver": "overlay2",

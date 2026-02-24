@@ -237,6 +237,7 @@ func cleanupAllInstances(client *ssh.Client) {
 			inst.EnvFile, inst.EnvFile,
 		))
 		run(client, fmt.Sprintf("sudo rm -rf /run/%sdocker 2>/dev/null; true", inst.Prefix))
+		run(client, fmt.Sprintf("sudo rm -rf %s/sysbox-run 2>/dev/null; true", inst.Root))
 		run(client, fmt.Sprintf("sudo rm -rf %s 2>/dev/null; true", inst.Root))
 		run(client, fmt.Sprintf("sudo ip link delete %sdocker0 2>/dev/null; true", inst.Prefix))
 		run(client, fmt.Sprintf(
@@ -246,10 +247,6 @@ func cleanupAllInstances(client *ssh.Client) {
 		run(client, fmt.Sprintf("sudo rm -f /etc/systemd/system/%sdocker.service 2>/dev/null; true", inst.Prefix))
 		run(client, fmt.Sprintf("rm -f %s 2>/dev/null; true", inst.EnvFile))
 	}
-	run(client, "sudo systemctl stop dockyard-sysbox 2>/dev/null; true")
-	run(client, "sudo systemctl disable dockyard-sysbox 2>/dev/null; true")
-	run(client, "sudo rm -f /etc/systemd/system/dockyard-sysbox.service 2>/dev/null; true")
-	run(client, "sudo rm -rf /var/lib/dockyard-sysbox /usr/local/lib/dockyard /var/log/dockyard-sysbox 2>/dev/null; true")
 	run(client, "sudo systemctl daemon-reload 2>/dev/null; true")
 }
 
@@ -332,11 +329,10 @@ func runTests(client *ssh.Client, host, user, keyPath string) {
 	// ── Phase 3: Service health ───────────────────────────────────────────────
 	//
 
-	// 06 — shared sysbox service active + per-instance docker services active
+	// 06 — per-instance docker services active (sysbox is embedded per-instance, not a shared service)
 	var rs []instResult
 	{
 		start := time.Now()
-		_, _, sc := run(client, "systemctl is-active dockyard-sysbox")
 		rs = forAll(client, allInstances, func(c *ssh.Client, inst Instance) (bool, string) {
 			_, _, c1 := run(c, "systemctl is-active "+inst.Prefix+"docker")
 			if c1 != 0 {
@@ -345,10 +341,8 @@ func runTests(client *ssh.Client, host, user, keyPath string) {
 			return true, ""
 		})
 		d := time.Since(start)
-		if sc != 0 {
-			fail(6, "all instances: services active", "dockyard-sysbox shared service not active", d)
-		} else if allOK(rs) {
-			pass(6, "all instances: services active (dockyard-sysbox + per-instance docker)", d)
+		if allOK(rs) {
+			pass(6, "all instances: per-instance docker services active", d)
 		} else {
 			fail(6, "all instances: services active", failMsgs(rs), d)
 		}
@@ -695,10 +689,9 @@ func runTests(client *ssh.Client, host, user, keyPath string) {
 		pass(20, "reboot", time.Since(start))
 	}
 
-	// 21 — post-reboot: shared sysbox active + B+C docker services active (concurrent)
+	// 21 — post-reboot: B+C docker services active (concurrent)
 	{
 		start := time.Now()
-		_, _, sc := run(client, "systemctl is-active dockyard-sysbox")
 		rs = forAll(client, surviving, func(c *ssh.Client, inst Instance) (bool, string) {
 			_, _, c1 := run(c, "systemctl is-active "+inst.Prefix+"docker")
 			if c1 != 0 {
@@ -707,9 +700,7 @@ func runTests(client *ssh.Client, host, user, keyPath string) {
 			return true, ""
 		})
 		d := time.Since(start)
-		if sc != 0 {
-			fail(21, "post-reboot: B+C services active", "dockyard-sysbox shared service not active", d)
-		} else if allOK(rs) {
+		if allOK(rs) {
 			pass(21, "post-reboot: B+C services active", d)
 		} else {
 			fail(21, "post-reboot: B+C services active", failMsgs(rs), d)
@@ -820,7 +811,7 @@ func runTests(client *ssh.Client, host, user, keyPath string) {
 		}
 	}
 
-	// 27 — full cleanup: no services, bridges, iptables rules, data dirs, shared sysbox
+	// 27 — full cleanup: no services, bridges, iptables rules, data dirs, users
 	{
 		start := time.Now()
 		var cleanFails []string
@@ -840,26 +831,16 @@ func runTests(client *ssh.Client, host, user, keyPath string) {
 			if strings.Contains(ipt, inst.Prefix) {
 				cleanFails = append(cleanFails, inst.Label+": residual iptables rules")
 			}
-			// data directory
+			// data directory (instance root)
 			out, _, _ := run(client, fmt.Sprintf("[ -d %s ] && echo exists || echo gone", inst.Root))
 			if strings.TrimSpace(out) == "exists" {
 				cleanFails = append(cleanFails, inst.Label+": "+inst.Root+" still exists")
 			}
-		}
-		// shared sysbox service gone
-		_, _, c := run(client, "systemctl is-active dockyard-sysbox")
-		if c == 0 {
-			cleanFails = append(cleanFails, "dockyard-sysbox shared service still active")
-		}
-		// shared sysbox data dir gone
-		out, _, _ := run(client, "[ -d /var/lib/dockyard-sysbox ] && echo exists || echo gone")
-		if strings.TrimSpace(out) == "exists" {
-			cleanFails = append(cleanFails, "/var/lib/dockyard-sysbox still exists")
-		}
-		// shared sysbox bin dir gone
-		out, _, _ = run(client, "[ -d /usr/local/lib/dockyard ] && echo exists || echo gone")
-		if strings.TrimSpace(out) == "exists" {
-			cleanFails = append(cleanFails, "/usr/local/lib/dockyard still exists")
+			// per-instance sysbox run dir gone (inside instance root)
+			out, _, _ = run(client, fmt.Sprintf("[ -d %s/sysbox-run ] && echo exists || echo gone", inst.Root))
+			if strings.TrimSpace(out) == "exists" {
+				cleanFails = append(cleanFails, inst.Label+": "+inst.Root+"/sysbox-run still exists")
+			}
 		}
 		// instance users and groups removed
 		for _, inst := range surviving {
@@ -875,7 +856,7 @@ func runTests(client *ssh.Client, host, user, keyPath string) {
 		}
 		d := time.Since(start)
 		if len(cleanFails) == 0 {
-			pass(27, "full cleanup: no services, bridges, iptables, data dirs, users, or shared sysbox", d)
+			pass(27, "full cleanup: no services, bridges, iptables, data dirs, or users", d)
 		} else {
 			fail(27, "full cleanup", strings.Join(cleanFails, " | "), d)
 		}
