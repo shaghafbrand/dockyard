@@ -63,7 +63,9 @@ Each env file defines 6 variables that fully configure an instance:
 | `DOCKYARD_POOL_BASE` | Address pool for user networks | Yes |
 | `DOCKYARD_POOL_SIZE` | Pool subnet size in CIDR bits | No |
 
-Everything else is derived: `RUNTIME_DIR`, `BRIDGE`, `EXEC_ROOT`, `SERVICE_NAME`, `SYSBOX_SERVICE_NAME`, `DOCKER_SOCKET`, `CONTAINERD_SOCKET`.
+Everything else is derived: `RUNTIME_DIR`, `BRIDGE`, `EXEC_ROOT`, `SERVICE_NAME`, `DOCKER_SOCKET`, `CONTAINERD_SOCKET`, `INSTANCE_USER`, `INSTANCE_GROUP`.
+
+`SYSBOX_SERVICE_NAME` is always `dockyard-sysbox` (host-level shared, not prefixed).
 
 ### gen-env: Config Generation
 
@@ -95,36 +97,42 @@ Defined in `cmd_create()`, cached in `.tmp/`:
 | Docker Rootless Extras | 29.2.1 | download.docker.com |
 | Sysbox CE (.deb) | 0.6.7 | downloads.nestybox.com |
 
-### Bundled Sysbox: Per-Instance Runtime
+### Shared Sysbox Daemon (Host-Level)
 
-Each dockyard instance bundles its own isolated sysbox installation:
+Sysbox 0.6.7 CE has hardcoded socket paths (`/run/sysbox/sysfs.sock`, `/run/sysbox/sysmgr.sock`). Only one sysbox-mgr + sysbox-fs can run per host.
 
-**Extraction (not installation)**: The sysbox .deb is extracted to get binaries (sysbox-runc, sysbox-mgr, sysbox-fs) but NOT installed via dpkg. No system-wide sysbox.service is created.
+**Architecture**: A single `dockyard-sysbox.service` is shared across all instances:
+- Shared binaries: `/usr/local/lib/dockyard/sysbox-{fs,mgr}` (copied on first `create`)
+- Shared data: `/var/lib/dockyard-sysbox/`
+- Shared logs: `/var/log/dockyard-sysbox/`
+- `sysbox-runc` stays per-instance in `${BIN_DIR}/` (invoked by containerd via daemon.json)
 
-**Bundled Service**: A `${PREFIX}sysbox.service` systemd unit is generated that:
-- Starts sysbox-mgr first (manages container creation)
-- Then starts sysbox-fs (manages container filesystems)
-- Uses bundled binaries from `${BIN_DIR}/`
-- Stores data in `${DOCKYARD_ROOT}/sysbox/`
-- Logs to `${LOG_DIR}/sysbox-{mgr,fs}.log`
+**Systemd mode**: `${PREFIX}docker.service` has `Requires=dockyard-sysbox.service`. Systemd handles ref-counting automatically — starts sysbox with the first docker service, stops it after the last.
+
+**Non-systemd mode**: `sysbox_acquire()` / `sysbox_release()` with `flock` on `/run/sysbox/dockyard-refcount.lock`. First acquire starts sysbox; last release stops it.
 
 **Startup Sequence**:
 ```
-${PREFIX}sysbox.service starts
-  ├─ sysbox-mgr (manages container lifecycle)
+dockyard-sysbox.service starts (shared, once per host)
+  ├─ sysbox-mgr (manages container creation)
   └─ sysbox-fs (manages container filesystems)
-       └─ ${PREFIX}docker.service starts
+       └─ ${PREFIX}docker.service starts (per instance)
             ├─ containerd
             └─ dockerd (with sysbox-runc as default runtime)
 ```
 
-**Service Dependencies**: The docker service has `Requires=${SYSBOX_SERVICE_NAME}.service`, ensuring sysbox starts first.
+**Lifecycle**: The shared service is installed on first `create` (skipped if already present) and removed by `disable`/`destroy` only when no `*_docker.service` files remain.
 
-**Isolation Benefits**:
-- Multiple dockyard instances can run different sysbox versions
-- No system-wide sysbox dependency or conflicts
-- Each instance's sysbox data is isolated
-- Clean uninstall removes everything (no system-wide state)
+### Per-Instance User and Group
+
+Each dockyard instance creates a dedicated system user and group at `create` time:
+
+- User/group name: `${DOCKYARD_DOCKER_PREFIX}docker` (e.g. `dy1_docker`)
+- Derived vars: `INSTANCE_USER="${DOCKYARD_DOCKER_PREFIX}docker"`, `INSTANCE_GROUP="${DOCKYARD_DOCKER_PREFIX}docker"`
+- Ownership: `DOCKYARD_ROOT` is `chown -R ${INSTANCE_USER}:${INSTANCE_GROUP}` after install
+- Socket access: `dockerd --group ${INSTANCE_GROUP}` makes the socket `root:${GROUP} 660`
+- Users in the group can access the socket without `sudo`
+- Both user and group are removed by `destroy`
 
 ### Self-Contained Systemd Services
 
@@ -142,36 +150,37 @@ Each rule uses `-i $BRIDGE` or `-o $BRIDGE` so instances can never interfere wit
 ### Directory Layout (per instance)
 
 ```
-${DOCKYARD_ROOT}/
-├── docker.sock              # Docker API socket
-├── docker/                  # Docker data (images, containers, volumes)
-│   └── containerd/          # Containerd content store
-├── sysbox/                  # Sysbox data (bundled instance-specific)
+${DOCKYARD_ROOT}/                        # owned by ${INSTANCE_USER}:${INSTANCE_GROUP}
+├── docker.sock                          # Docker API socket (root:${GROUP} 660)
+├── docker/                              # Docker data (images, containers, volumes)
+│   └── containerd/                      # Containerd content store
 └── docker-runtime/
-    ├── bin/                 # dockerd, containerd, sysbox-{runc,mgr,fs}, dockyardctl, docker wrapper, etc.
+    ├── bin/                             # dockerd, containerd, sysbox-runc, dockyardctl, docker wrapper
     ├── etc/
-    │   ├── daemon.json      # Docker daemon config
-    │   └── dockyard.env     # Copy of config (written by create)
+    │   ├── daemon.json                  # Docker daemon config
+    │   └── dockyard.env                 # Copy of config (written by create)
     ├── lib/
-    │   └── docker/          # DOCKER_CONFIG dir (credentials, config)
+    │   └── docker/                      # DOCKER_CONFIG dir (credentials, config)
     ├── log/
-    │   ├── sysbox-mgr.log   # Sysbox manager logs
-    │   ├── sysbox-fs.log    # Sysbox filesystem logs
-    │   ├── containerd.log   # Containerd logs
-    │   └── dockerd.log      # Docker daemon logs
+    │   ├── containerd.log
+    │   └── dockerd.log
     └── run/
-        ├── sysbox-mgr.pid   # Sysbox manager PID
-        ├── sysbox-fs.pid    # Sysbox filesystem PID
-        └── containerd.pid   # Containerd PID
+        └── containerd.pid
 
-/run/${PREFIX}docker/        # Runtime state (tmpfs)
+/run/${PREFIX}docker/                    # Runtime state (tmpfs)
 ├── containerd/
 │   └── containerd.sock
 └── dockerd.pid
 
 /etc/systemd/system/
-├── ${PREFIX}sysbox.service  # Bundled sysbox service
-└── ${PREFIX}docker.service  # Docker service (depends on sysbox)
+├── dockyard-sysbox.service              # Shared sysbox service (one per host)
+└── ${PREFIX}docker.service              # Per-instance docker service (Requires=dockyard-sysbox)
+
+# Shared sysbox resources (created on first install, removed on last destroy)
+/usr/local/lib/dockyard/sysbox-{fs,mgr}  # Shared sysbox-mgr and sysbox-fs binaries
+/var/lib/dockyard-sysbox/                # Shared sysbox data
+/var/log/dockyard-sysbox/                # Shared sysbox logs
+/run/sysbox/                             # Sysbox sockets + ref-count lock
 ```
 
 ## Script Conventions

@@ -1,6 +1,6 @@
 # Progress
 
-## Current Status: Testing in progress
+## Current Status: All 27 tests passing ✅
 
 ## Architecture Changes Implemented
 
@@ -32,26 +32,35 @@ and stops it after the last.
 **Last-instance cleanup**: `cmd_disable` only stops/removes `dockyard-sysbox.service`
 when no `*_docker.service` files remain. `cmd_destroy` then removes shared dirs.
 
+### Per-Instance User and Group
+
+Each dockyard instance gets a dedicated system user and group (`${PREFIX}docker`):
+
+- Ownership: `DOCKYARD_ROOT` chowned to `${INSTANCE_USER}:${INSTANCE_GROUP}`
+- Socket access: `dockerd --group ${INSTANCE_GROUP}` → socket is `root:${GROUP} 660`
+- Users in the group can use the socket without `sudo`
+- Both are removed cleanly on `destroy`
+
 ### Source Split (src/ → dist/dockyard.sh)
 
 ```
 src/00_header.sh     shebang, set -euo pipefail, SCRIPT_DIR
-src/01_env.sh        env loading + derive_vars (+ shared sysbox vars)
+src/01_env.sh        env loading + derive_vars (+ shared sysbox vars + INSTANCE_USER/GROUP)
 src/02_helpers.sh    helper functions (+ sysbox_acquire/sysbox_release)
 src/03_checks.sh     conflict checks
 src/10_gen_env.sh    gen-env command
-src/11_create.sh     create command
-src/12_enable.sh     enable command (systemd service install)
+src/11_create.sh     create command (+ groupadd/useradd + chown)
+src/12_enable.sh     enable command (+ --group flag for dockerd)
 src/13_disable.sh    disable command (service removal, last-instance check)
-src/14_start.sh      start command (ref-counted sysbox start)
+src/14_start.sh      start command (ref-counted sysbox start + --group flag)
 src/15_stop.sh       stop command (ref-counted sysbox stop)
 src/16_status.sh     status command
-src/17_destroy.sh    destroy command
+src/17_destroy.sh    destroy command (+ userdel/groupdel)
 src/90_usage.sh      usage text
 src/99_dispatch.sh   command dispatch
 ```
 
-Build: `./build.sh` → `dist/dockyard.sh` (1375 lines, syntax-clean)
+Build: `./build.sh` → `dist/dockyard.sh` (syntax-clean)
 
 ### Bug Fixes Applied
 
@@ -65,7 +74,7 @@ Build: `./build.sh` → `dist/dockyard.sh` (1375 lines, syntax-clean)
 
 ### Test Suite (cmd/dockyardtest/main.go)
 
-24 tests across 3 instances (A=dy1_, B=dy2_, C=dy3_):
+27 tests across 3 instances (A=dy1_, B=dy2_, C=dy3_). Per-test timing shown in output; total elapsed printed in summary.
 
 | Phase | Tests | Description |
 |-------|-------|-------------|
@@ -76,9 +85,13 @@ Build: `./build.sh` → `dist/dockyard.sh` (1375 lines, syntax-clean)
 | Networking | 08-09 | Outbound ping + DNS resolution |
 | DinD | 10-12 | Start DinD, inner container, inner networking |
 | Isolation | 13 | Daemon-level: A's containers not in B's docker ps |
-| Partial destroy | 14-16 | Destroy A, verify cleanup, B+C still healthy |
-| Reboot | 17-21 | Full reboot, B+C come back, DinD works |
-| Full destroy | 22-24 | Destroy B+C, verify complete cleanup |
+| Stop/start cycle | 14 | systemctl stop/start instance A; verify containers still run |
+| Socket permissions | 15 | Socket mode last octet = 0; group = `${PREFIX}docker` |
+| Destroy under load | 16 | Running container present at destroy time; must succeed |
+| Double destroy | 17 | Second destroy must exit 0 (idempotent) |
+| Partial destroy | 18-20 | Destroy A, verify cleanup, B+C still healthy |
+| Reboot | 21-25 | Full reboot, B+C come back, DinD works |
+| Full destroy | 26-27 | Destroy B+C, verify complete cleanup + user/group removed |
 
 ### Pinned Versions
 
@@ -92,8 +105,14 @@ Build: `./build.sh` → `dist/dockyard.sh` (1375 lines, syntax-clean)
 incompatible with sysbox's bind-mount of `/proc/sys` entries.
 See FINDINGS.md for details.
 
+## Completed
+
+- [x] All 27 tests pass on target VM (100.106.185.92)
+- [x] Per-test timing output
+- [x] Per-instance user/group (`${PREFIX}docker`)
+- [x] Socket group ownership verified in test suite
+
 ## Pending
 
-- [ ] Run `./dockyardtest --host 100.106.185.92 --user thies` until all 24 tests pass
 - [ ] Add arm64 support (low priority)
 - [ ] Non-Ubuntu OS compatibility (low priority)

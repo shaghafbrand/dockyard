@@ -25,7 +25,7 @@ Sysbox must be treated as a **host-level shared daemon** (like the Linux kernel 
 
 **Architecture**:
 - `dockyard-sysbox.service` — one per host, not per instance
-- Shared binary: `/usr/local/lib/dockyard/sysbox-{fs,mgr,runc}` (copied on first create)
+- Shared binary: `/usr/local/lib/dockyard/sysbox-{fs,mgr}` (copied on first create; sysbox-runc stays per-instance in `${BIN_DIR}/`)
 - Shared data: `/var/lib/dockyard-sysbox/`
 - Ref-count file: `/run/sysbox/dockyard-refcount` (direct/non-systemd mode)
 - First dockyard instance starts sysbox; last one stops it
@@ -36,7 +36,7 @@ Sysbox must be treated as a **host-level shared daemon** (like the Linux kernel 
 ## docker:dind latest (27.x) incompatible with sysbox 0.6.7
 
 **Date**: 2026-02-23
-**Severity**: DinD test failures (tests 14, 15, 26)
+**Severity**: DinD test failures (tests 10, 11, 12)
 
 Error:
 ```

@@ -87,23 +87,29 @@ The installer downloads static binaries (cached in `.tmp/` for repeated installs
 |----------|---------|----------|
 | [Docker CE](https://download.docker.com/linux/static/stable/x86_64/) | 29.2.1 | dockerd, containerd, docker, ctr, runc, etc. |
 | [Docker Rootless Extras](https://download.docker.com/linux/static/stable/x86_64/) | 29.2.1 | dockerd-rootless, vpnkit, rootlesskit, etc. |
-| [Sysbox CE](https://github.com/nestybox/sysbox) | 0.6.7 | sysbox-runc, sysbox-mgr, sysbox-fs |
+| [Sysbox CE](https://github.com/nestybox/sysbox) | 0.6.7 | sysbox-runc (per-instance), sysbox-mgr + sysbox-fs (shared host daemon) |
 
 ```
-${DOCKYARD_ROOT}/
-├── docker.sock                     # Docker API socket
-├── docker/                         # Images, containers, volumes
+${DOCKYARD_ROOT}/                       # owned by ${PREFIX}docker user/group
+├── docker.sock                         # Docker API socket (root:${PREFIX}docker 660)
+├── docker/                             # Images, containers, volumes
 │   └── containerd/
 └── docker-runtime/
-    ├── bin/                        # dockerd, containerd, sysbox-runc, dockyardctl, docker wrapper
+    ├── bin/                            # dockerd, containerd, sysbox-runc, dockyardctl, docker wrapper
     ├── etc/
-    │   ├── daemon.json             # Daemon configuration
-    │   └── dockyard.env            # Copy of config (written by create)
-    ├── log/                        # containerd.log, dockerd.log
-    └── run/                        # PID files
+    │   ├── daemon.json                 # Daemon configuration
+    │   └── dockyard.env                # Copy of config (written by create)
+    ├── log/                            # containerd.log, dockerd.log
+    └── run/                            # PID files
 
-/etc/systemd/system/${PREFIX}docker.service   # Self-contained systemd unit
+/etc/systemd/system/${PREFIX}docker.service   # Per-instance docker unit
+/etc/systemd/system/dockyard-sysbox.service   # Shared sysbox unit (one per host)
 /run/${PREFIX}docker/                         # Runtime state (tmpfs)
+
+# Shared sysbox resources (first install creates, last destroy removes)
+/usr/local/lib/dockyard/sysbox-{fs,mgr}
+/var/lib/dockyard-sysbox/
+/var/log/dockyard-sysbox/
 ```
 
 The systemd service file is generated with all paths hardcoded at create time. It has no dependency on this repository — you can delete the repo after creation and everything keeps running.
@@ -140,10 +146,11 @@ export DOCKER_HOST=unix:///dockyard/docker.sock
 
 ## Prerequisites
 
-- Linux with systemd
-- sysbox installed and running (`sysbox-fs.service`, `sysbox-mgr.service`)
+- Linux with systemd (Ubuntu 20.04+ recommended)
 - `curl`, `tar`, `dpkg-deb` for binary downloads
 - Root access for installation
+
+Dockyard downloads and manages sysbox itself — no system-wide sysbox installation required.
 
 ## Destroy
 

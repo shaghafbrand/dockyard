@@ -1,6 +1,20 @@
 # Sysbox Bundled Service Fix
 
-## Problem
+> **ARCHIVED — superseded architecture**
+>
+> This document describes an intermediate design where each dockyard instance
+> ran its own bundled sysbox daemon (`${PREFIX}sysbox.service`). That approach
+> was abandoned because sysbox 0.6.7 CE has hardcoded socket paths
+> (`/run/sysbox/sysfs.sock`, `/run/sysbox/sysmgr.sock`) — only one sysbox
+> daemon can run per host.
+>
+> The current architecture uses a **single shared `dockyard-sysbox.service`**
+> per host. See [FINDINGS.md](FINDINGS.md) for the root-cause analysis and
+> [PROGRESS.md](PROGRESS.md) for the new architecture.
+
+---
+
+## Problem (historical)
 
 The dockyard installer had a critical dependency issue:
 
