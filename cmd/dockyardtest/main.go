@@ -200,22 +200,30 @@ func failMsgs(rs []instResult) string {
 // ── Test result tracking ──────────────────────────────────────────────────────
 
 type Result struct {
-	Num    int
-	Name   string
-	Passed bool
-	Msg    string
+	Num      int
+	Name     string
+	Passed   bool
+	Msg      string
+	Duration time.Duration
 }
 
 var results []Result
 
-func pass(num int, name string) {
-	results = append(results, Result{num, name, true, ""})
-	fmt.Printf("[PASS] %02d %s\n", num, name)
+func fmtDur(d time.Duration) string {
+	if d < time.Second {
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	}
+	return fmt.Sprintf("%.1fs", d.Seconds())
 }
 
-func fail(num int, name, msg string) {
-	results = append(results, Result{num, name, false, msg})
-	fmt.Printf("[FAIL] %02d %s — %s\n", num, name, msg)
+func pass(num int, name string, d time.Duration) {
+	results = append(results, Result{num, name, true, "", d})
+	fmt.Printf("[PASS] %02d %s (%s)\n", num, name, fmtDur(d))
+}
+
+func fail(num int, name, msg string, d time.Duration) {
+	results = append(results, Result{num, name, false, msg, d})
+	fmt.Printf("[FAIL] %02d %s — %s (%s)\n", num, name, msg, fmtDur(d))
 }
 
 // ── Test suite ────────────────────────────────────────────────────────────────
@@ -255,25 +263,32 @@ func runTests(client *ssh.Client, host, user, keyPath string) {
 	//
 
 	// 01 — Upload dockyard.sh
-	if err := upload(client, "dist/dockyard.sh", "~/dockyard.sh"); err != nil {
-		fail(1, "Upload dockyard.sh", err.Error())
-		return
+	{
+		start := time.Now()
+		err := upload(client, "dist/dockyard.sh", "~/dockyard.sh")
+		d := time.Since(start)
+		if err != nil {
+			fail(1, "Upload dockyard.sh", err.Error(), d)
+			return
+		}
+		pass(1, "Upload dockyard.sh", d)
 	}
-	pass(1, "Upload dockyard.sh")
 
 	// 02-04 — gen-env for each instance (sequential, cheap)
 	for i, inst := range allInstances {
 		num := i + 2
+		start := time.Now()
 		cmd := fmt.Sprintf(
 			"rm -f %s && DOCKYARD_ENV=%s DOCKYARD_ROOT=%s DOCKYARD_DOCKER_PREFIX=%s ~/dockyard.sh gen-env",
 			inst.EnvFile, inst.EnvFile, inst.Root, inst.Prefix,
 		)
 		_, se, code := run(client, cmd)
+		d := time.Since(start)
 		if code != 0 {
-			fail(num, fmt.Sprintf("gen-env %s", inst.Label), se)
+			fail(num, fmt.Sprintf("gen-env %s", inst.Label), se, d)
 			return
 		}
-		pass(num, fmt.Sprintf("gen-env %s (%s / %s)", inst.Label, inst.Root, inst.Prefix))
+		pass(num, fmt.Sprintf("gen-env %s (%s / %s)", inst.Label, inst.Root, inst.Prefix), d)
 	}
 
 	//
@@ -282,32 +297,36 @@ func runTests(client *ssh.Client, host, user, keyPath string) {
 
 	// 05 — create A + B + C in parallel (3s stagger to avoid dpkg-deb races)
 	fmt.Println("[INFO] Creating all instances concurrently (this takes a while)...")
-	type createRes struct {
-		inst Instance
-		ok   bool
-		msg  string
-	}
-	createCh := make(chan createRes, len(allInstances))
-	for idx, inst := range allInstances {
-		idx, inst := idx, inst
-		go func() {
-			time.Sleep(time.Duration(idx) * 3 * time.Second)
-			_, se, c := run(client, fmt.Sprintf("DOCKYARD_ENV=%s sudo -E ~/dockyard.sh create", inst.EnvFile))
-			createCh <- createRes{inst, c == 0, se}
-		}()
-	}
-	var createFails []string
-	for range allInstances {
-		r := <-createCh
-		if !r.ok {
-			createFails = append(createFails, fmt.Sprintf("[%s] %s", r.inst.Label, r.msg))
+	{
+		start := time.Now()
+		type createRes struct {
+			inst Instance
+			ok   bool
+			msg  string
 		}
+		createCh := make(chan createRes, len(allInstances))
+		for idx, inst := range allInstances {
+			idx, inst := idx, inst
+			go func() {
+				time.Sleep(time.Duration(idx) * 3 * time.Second)
+				_, se, c := run(client, fmt.Sprintf("DOCKYARD_ENV=%s sudo -E ~/dockyard.sh create", inst.EnvFile))
+				createCh <- createRes{inst, c == 0, se}
+			}()
+		}
+		var createFails []string
+		for range allInstances {
+			r := <-createCh
+			if !r.ok {
+				createFails = append(createFails, fmt.Sprintf("[%s] %s", r.inst.Label, r.msg))
+			}
+		}
+		d := time.Since(start)
+		if len(createFails) > 0 {
+			fail(5, "create all instances", strings.Join(createFails, " | "), d)
+			return
+		}
+		pass(5, "create all instances (A+B+C concurrent)", d)
 	}
-	if len(createFails) > 0 {
-		fail(5, "create all instances", strings.Join(createFails, " | "))
-		return
-	}
-	pass(5, "create all instances (A+B+C concurrent)")
 
 	//
 	// ── Phase 3: Service health ───────────────────────────────────────────────
@@ -316,6 +335,7 @@ func runTests(client *ssh.Client, host, user, keyPath string) {
 	// 06 — shared sysbox service active + per-instance docker services active
 	var rs []instResult
 	{
+		start := time.Now()
 		_, _, sc := run(client, "systemctl is-active dockyard-sysbox")
 		rs = forAll(client, allInstances, func(c *ssh.Client, inst Instance) (bool, string) {
 			_, _, c1 := run(c, "systemctl is-active "+inst.Prefix+"docker")
@@ -324,12 +344,13 @@ func runTests(client *ssh.Client, host, user, keyPath string) {
 			}
 			return true, ""
 		})
+		d := time.Since(start)
 		if sc != 0 {
-			fail(6, "all instances: services active", "dockyard-sysbox shared service not active")
+			fail(6, "all instances: services active", "dockyard-sysbox shared service not active", d)
 		} else if allOK(rs) {
-			pass(6, "all instances: services active (dockyard-sysbox + per-instance docker)")
+			pass(6, "all instances: services active (dockyard-sysbox + per-instance docker)", d)
 		} else {
-			fail(6, "all instances: services active", failMsgs(rs))
+			fail(6, "all instances: services active", failMsgs(rs), d)
 		}
 	}
 
@@ -338,17 +359,21 @@ func runTests(client *ssh.Client, host, user, keyPath string) {
 	//
 
 	// 07 — all instances: container runs
-	rs = forAll(client, allInstances, func(c *ssh.Client, inst Instance) (bool, string) {
-		out, se, code := run(c, fmt.Sprintf("DOCKER_HOST=unix://%s docker run --rm alpine echo hello", inst.Socket))
-		if code != 0 || !strings.Contains(out, "hello") {
-			return false, se
+	{
+		start := time.Now()
+		rs = forAll(client, allInstances, func(c *ssh.Client, inst Instance) (bool, string) {
+			out, se, code := run(c, fmt.Sprintf("sudo DOCKER_HOST=unix://%s docker run --rm alpine echo hello", inst.Socket))
+			if code != 0 || !strings.Contains(out, "hello") {
+				return false, se
+			}
+			return true, ""
+		})
+		d := time.Since(start)
+		if allOK(rs) {
+			pass(7, "all instances: container run", d)
+		} else {
+			fail(7, "all instances: container run", failMsgs(rs), d)
 		}
-		return true, ""
-	})
-	if allOK(rs) {
-		pass(7, "all instances: container run")
-	} else {
-		fail(7, "all instances: container run", failMsgs(rs))
 	}
 
 	//
@@ -356,31 +381,39 @@ func runTests(client *ssh.Client, host, user, keyPath string) {
 	//
 
 	// 08 — all instances: outbound ping
-	rs = forAll(client, allInstances, func(c *ssh.Client, inst Instance) (bool, string) {
-		out, se, code := run(c, fmt.Sprintf("DOCKER_HOST=unix://%s docker run --rm alpine ping -c3 1.1.1.1", inst.Socket))
-		if code != 0 || strings.Contains(out, "100% packet loss") {
-			return false, out + se
+	{
+		start := time.Now()
+		rs = forAll(client, allInstances, func(c *ssh.Client, inst Instance) (bool, string) {
+			out, se, code := run(c, fmt.Sprintf("sudo DOCKER_HOST=unix://%s docker run --rm alpine ping -c3 1.1.1.1", inst.Socket))
+			if code != 0 || strings.Contains(out, "100% packet loss") {
+				return false, out + se
+			}
+			return true, ""
+		})
+		d := time.Since(start)
+		if allOK(rs) {
+			pass(8, "all instances: outbound ping", d)
+		} else {
+			fail(8, "all instances: outbound ping", failMsgs(rs), d)
 		}
-		return true, ""
-	})
-	if allOK(rs) {
-		pass(8, "all instances: outbound ping")
-	} else {
-		fail(8, "all instances: outbound ping", failMsgs(rs))
 	}
 
 	// 09 — all instances: DNS resolution
-	rs = forAll(client, allInstances, func(c *ssh.Client, inst Instance) (bool, string) {
-		out, se, code := run(c, fmt.Sprintf("DOCKER_HOST=unix://%s docker run --rm alpine nslookup google.com", inst.Socket))
-		if code != 0 || !strings.Contains(out, "Address") {
-			return false, se
+	{
+		start := time.Now()
+		rs = forAll(client, allInstances, func(c *ssh.Client, inst Instance) (bool, string) {
+			out, se, code := run(c, fmt.Sprintf("sudo DOCKER_HOST=unix://%s docker run --rm alpine nslookup google.com", inst.Socket))
+			if code != 0 || !strings.Contains(out, "Address") {
+				return false, se
+			}
+			return true, ""
+		})
+		d := time.Since(start)
+		if allOK(rs) {
+			pass(9, "all instances: DNS resolution", d)
+		} else {
+			fail(9, "all instances: DNS resolution", failMsgs(rs), d)
 		}
-		return true, ""
-	})
-	if allOK(rs) {
-		pass(9, "all instances: DNS resolution")
-	} else {
-		fail(9, "all instances: DNS resolution", failMsgs(rs))
 	}
 
 	//
@@ -388,63 +421,75 @@ func runTests(client *ssh.Client, host, user, keyPath string) {
 	//
 
 	// 10 — all instances: start DinD container (no --privileged; sysbox handles it)
-	rs = forAll(client, allInstances, func(c *ssh.Client, inst Instance) (bool, string) {
-		cname := "dind-" + strings.ToLower(inst.Label)
-		run(c, fmt.Sprintf("DOCKER_HOST=unix://%s docker rm -f %s 2>/dev/null", inst.Socket, cname))
-		_, se, code := run(c, fmt.Sprintf("DOCKER_HOST=unix://%s docker run -d --name %s docker:26.1-dind", inst.Socket, cname))
-		if code != 0 {
-			return false, se
-		}
-		// Wait up to 120s for inner dockerd
-		for i := 0; i < 60; i++ {
-			_, _, c2 := run(c, fmt.Sprintf("DOCKER_HOST=unix://%s docker exec %s docker info", inst.Socket, cname))
-			if c2 == 0 {
-				return true, ""
+	{
+		start := time.Now()
+		rs = forAll(client, allInstances, func(c *ssh.Client, inst Instance) (bool, string) {
+			cname := "dind-" + strings.ToLower(inst.Label)
+			run(c, fmt.Sprintf("sudo DOCKER_HOST=unix://%s docker rm -f %s 2>/dev/null", inst.Socket, cname))
+			_, se, code := run(c, fmt.Sprintf("sudo DOCKER_HOST=unix://%s docker run -d --name %s docker:26.1-dind", inst.Socket, cname))
+			if code != 0 {
+				return false, se
 			}
-			time.Sleep(2 * time.Second)
+			// Wait up to 120s for inner dockerd
+			for i := 0; i < 60; i++ {
+				_, _, c2 := run(c, fmt.Sprintf("sudo DOCKER_HOST=unix://%s docker exec %s docker info", inst.Socket, cname))
+				if c2 == 0 {
+					return true, ""
+				}
+				time.Sleep(2 * time.Second)
+			}
+			return false, "inner dockerd did not start within 120s"
+		})
+		d := time.Since(start)
+		if allOK(rs) {
+			pass(10, "all instances: DinD start", d)
+		} else {
+			fail(10, "all instances: DinD start", failMsgs(rs), d)
 		}
-		return false, "inner dockerd did not start within 120s"
-	})
-	if allOK(rs) {
-		pass(10, "all instances: DinD start")
-	} else {
-		fail(10, "all instances: DinD start", failMsgs(rs))
 	}
 
 	// 11 — all instances: DinD inner container
-	rs = forAll(client, allInstances, func(c *ssh.Client, inst Instance) (bool, string) {
-		cname := "dind-" + strings.ToLower(inst.Label)
-		out, se, code := run(c, fmt.Sprintf(
-			"DOCKER_HOST=unix://%s docker exec %s docker run --rm alpine echo inner-hello",
-			inst.Socket, cname,
-		))
-		if code != 0 || !strings.Contains(out, "inner-hello") {
-			return false, se
+	{
+		start := time.Now()
+		rs = forAll(client, allInstances, func(c *ssh.Client, inst Instance) (bool, string) {
+			cname := "dind-" + strings.ToLower(inst.Label)
+			out, se, code := run(c, fmt.Sprintf(
+				"sudo DOCKER_HOST=unix://%s docker exec %s docker run --rm alpine echo inner-hello",
+				inst.Socket, cname,
+			))
+			if code != 0 || !strings.Contains(out, "inner-hello") {
+				return false, se
+			}
+			return true, ""
+		})
+		d := time.Since(start)
+		if allOK(rs) {
+			pass(11, "all instances: DinD inner container", d)
+		} else {
+			fail(11, "all instances: DinD inner container", failMsgs(rs), d)
 		}
-		return true, ""
-	})
-	if allOK(rs) {
-		pass(11, "all instances: DinD inner container")
-	} else {
-		fail(11, "all instances: DinD inner container", failMsgs(rs))
 	}
 
 	// 12 — all instances: DinD inner networking
-	rs = forAll(client, allInstances, func(c *ssh.Client, inst Instance) (bool, string) {
-		cname := "dind-" + strings.ToLower(inst.Label)
-		out, se, code := run(c, fmt.Sprintf(
-			"DOCKER_HOST=unix://%s docker exec %s docker run --rm alpine ping -c3 1.1.1.1",
-			inst.Socket, cname,
-		))
-		if code != 0 || strings.Contains(out, "100% packet loss") {
-			return false, out + se
+	{
+		start := time.Now()
+		rs = forAll(client, allInstances, func(c *ssh.Client, inst Instance) (bool, string) {
+			cname := "dind-" + strings.ToLower(inst.Label)
+			out, se, code := run(c, fmt.Sprintf(
+				"sudo DOCKER_HOST=unix://%s docker exec %s docker run --rm alpine ping -c3 1.1.1.1",
+				inst.Socket, cname,
+			))
+			if code != 0 || strings.Contains(out, "100% packet loss") {
+				return false, out + se
+			}
+			return true, ""
+		})
+		d := time.Since(start)
+		if allOK(rs) {
+			pass(12, "all instances: DinD inner networking", d)
+		} else {
+			fail(12, "all instances: DinD inner networking", failMsgs(rs), d)
 		}
-		return true, ""
-	})
-	if allOK(rs) {
-		pass(12, "all instances: DinD inner networking")
-	} else {
-		fail(12, "all instances: DinD inner networking", failMsgs(rs))
 	}
 
 	//
@@ -452,100 +497,207 @@ func runTests(client *ssh.Client, host, user, keyPath string) {
 	//
 
 	// 13 — all pairs isolated: A↔B, A↔C, B↔C
-	isolationFails := checkIsolation(client, allInstances)
-	if len(isolationFails) == 0 {
-		pass(13, "multi-instance isolation (all pairs)")
-	} else {
-		fail(13, "multi-instance isolation", strings.Join(isolationFails, " | "))
+	{
+		start := time.Now()
+		isolationFails := checkIsolation(client, allInstances)
+		d := time.Since(start)
+		if len(isolationFails) == 0 {
+			pass(13, "multi-instance isolation (all pairs)", d)
+		} else {
+			fail(13, "multi-instance isolation", strings.Join(isolationFails, " | "), d)
+		}
 	}
 
-	// Cleanup DinD containers before partial destroy
+	// Cleanup DinD containers before edge-case and destroy phases
 	for _, inst := range allInstances {
 		inst := inst
 		cname := "dind-" + strings.ToLower(inst.Label)
-		run(client, fmt.Sprintf("DOCKER_HOST=unix://%s docker rm -f %s 2>/dev/null", inst.Socket, cname))
+		run(client, fmt.Sprintf("sudo DOCKER_HOST=unix://%s docker rm -f %s 2>/dev/null", inst.Socket, cname))
 	}
 
 	//
-	// ── Phase 8: Destroy instance A, verify B+C unaffected ───────────────────
+	// ── Phase 8: Edge-case tests ──────────────────────────────────────────────
 	//
 
-	// 14 — destroy A
-	_, se, code := run(client, fmt.Sprintf("DOCKYARD_ENV=%s sudo -E ~/dockyard.sh destroy --yes", allInstances[0].EnvFile))
-	if code != 0 {
-		fail(14, "destroy instance A", se)
-	} else {
-		pass(14, "destroy instance A")
-	}
-
-	// 15 — A: service gone, bridge gone, iptables clean
-	aClean := true
-	var aCleanMsgs []string
-
-	_, _, c1 := run(client, "systemctl is-active "+allInstances[0].Prefix+"docker")
-	if c1 == 0 {
-		aClean = false
-		aCleanMsgs = append(aCleanMsgs, "service still active")
-	}
-	_, _, c2 := run(client, "ip link show "+allInstances[0].Prefix+"docker0")
-	if c2 == 0 {
-		aClean = false
-		aCleanMsgs = append(aCleanMsgs, "bridge still exists")
-	}
-	ipt, _, _ := run(client, "iptables-save | grep -F "+allInstances[0].Prefix+" || true")
-	if strings.Contains(ipt, allInstances[0].Prefix) {
-		aClean = false
-		aCleanMsgs = append(aCleanMsgs, "residual iptables rules")
-	}
-	if aClean {
-		pass(15, "A: fully cleaned up (service+bridge+iptables)")
-	} else {
-		fail(15, "A: fully cleaned up", strings.Join(aCleanMsgs, ", "))
-	}
-
-	// 16 — B+C: still healthy after A destroy (container + ping)
-	surviving := allInstances[1:]
-	rs = forAll(client, surviving, func(c *ssh.Client, inst Instance) (bool, string) {
-		out, se, code := run(c, fmt.Sprintf("DOCKER_HOST=unix://%s docker run --rm alpine ping -c3 1.1.1.1", inst.Socket))
-		if code != 0 || strings.Contains(out, "100% packet loss") {
-			return false, out + se
-		}
-		return true, ""
-	})
-	if allOK(rs) {
-		pass(16, "B+C: still healthy after A destroy")
-	} else {
-		fail(16, "B+C: still healthy after A destroy", failMsgs(rs))
-	}
-
-	//
-	// ── Phase 9: Reboot — all surviving instances must come back ──────────────
-	//
-
-	// 17 — reboot
-	fmt.Println("[INFO] Rebooting host...")
-	run(client, "sudo reboot")
-	client.Close()
-	time.Sleep(15 * time.Second) // wait for it to actually go down
-
-	fmt.Println("[INFO] Waiting for SSH (up to 4min)...")
-	if err := waitForSSH(host, 4*time.Minute); err != nil {
-		fail(17, "reboot", err.Error())
-		return
-	}
-	// Give systemd a few seconds to finish starting services
-	time.Sleep(10 * time.Second)
-
-	var reconnErr error
-	client, reconnErr = dialSSH(host, user, keyPath)
-	if reconnErr != nil {
-		fail(17, "reboot", "could not reconnect: "+reconnErr.Error())
-		return
-	}
-	pass(17, "reboot")
-
-	// 18 — post-reboot: shared sysbox active + B+C docker services active (concurrent)
+	// 14 — stop/start cycle on instance A
+	// Validates ExecStartPre/ExecStopPost iptables lifecycle and clean daemon restart.
 	{
+		start := time.Now()
+		inst := allInstances[0]
+		_, se, code := run(client, "sudo systemctl stop "+inst.Prefix+"docker")
+		if code != 0 {
+			fail(14, "stop/start cycle", "stop failed: "+se, time.Since(start))
+		} else {
+			_, _, isActive := run(client, "systemctl is-active "+inst.Prefix+"docker")
+			if isActive == 0 {
+				fail(14, "stop/start cycle", "service still active after stop", time.Since(start))
+			} else {
+				_, se2, c2 := run(client, "sudo systemctl start "+inst.Prefix+"docker")
+				if c2 != 0 {
+					fail(14, "stop/start cycle", "start failed: "+se2, time.Since(start))
+				} else {
+					out, se3, c3 := run(client, fmt.Sprintf(
+						"sudo DOCKER_HOST=unix://%s docker run --rm alpine echo cycled", inst.Socket,
+					))
+					if c3 != 0 || !strings.Contains(out, "cycled") {
+						fail(14, "stop/start cycle", "container after restart: "+se3, time.Since(start))
+					} else {
+						pass(14, "stop/start cycle (stop → start → container run)", time.Since(start))
+					}
+				}
+			}
+		}
+	}
+
+	// 15 — socket permissions: not world-accessible + owned by instance group
+	// The docker socket must never be world-accessible, and must be owned by the
+	// per-instance group (${PREFIX}docker) so group members can access it without sudo.
+	{
+		start := time.Now()
+		rs = forAll(client, allInstances, func(c *ssh.Client, inst Instance) (bool, string) {
+			out, se, code := run(c, fmt.Sprintf("stat -c '%%a %%G' %s", inst.Socket))
+			if code != 0 {
+				return false, "stat failed: " + se
+			}
+			parts := strings.Fields(strings.TrimSpace(out))
+			if len(parts) != 2 {
+				return false, "unexpected stat output: " + out
+			}
+			mode, group := parts[0], parts[1]
+			// Last octal digit covers world r/w/x — must be 0.
+			if len(mode) > 0 && mode[len(mode)-1] != '0' {
+				return false, fmt.Sprintf("socket %s is world-accessible (mode %s)", inst.Socket, mode)
+			}
+			// Group must be <prefix>docker
+			expectedGroup := inst.Prefix + "docker"
+			if group != expectedGroup {
+				return false, fmt.Sprintf("socket %s group is %q, want %q", inst.Socket, group, expectedGroup)
+			}
+			return true, ""
+		})
+		d := time.Since(start)
+		if allOK(rs) {
+			pass(15, "socket permissions (not world-accessible, group-owned by instance)", d)
+		} else {
+			fail(15, "socket permissions", failMsgs(rs), d)
+		}
+	}
+
+	//
+	// ── Phase 9: Destroy instance A, verify B+C unaffected ───────────────────
+	//
+
+	// 16 — destroy A under load (running container must not block destroy)
+	{
+		start := time.Now()
+		inst := allInstances[0]
+		run(client, fmt.Sprintf(
+			"sudo DOCKER_HOST=unix://%s docker run -d --name load-test alpine sleep 300 2>/dev/null",
+			inst.Socket,
+		))
+		_, se, code := run(client, fmt.Sprintf("DOCKYARD_ENV=%s sudo -E ~/dockyard.sh destroy --yes", inst.EnvFile))
+		d := time.Since(start)
+		if code != 0 {
+			fail(16, "destroy under load", se, d)
+		} else {
+			pass(16, "destroy under load (running container present at destroy time)", d)
+		}
+	}
+
+	// 17 — double destroy idempotency (A already gone, second call must succeed)
+	{
+		start := time.Now()
+		_, se, code := run(client, fmt.Sprintf(
+			"DOCKYARD_ENV=%s sudo -E ~/dockyard.sh destroy --yes", allInstances[0].EnvFile,
+		))
+		d := time.Since(start)
+		if code != 0 {
+			fail(17, "double destroy idempotency", se, d)
+		} else {
+			pass(17, "double destroy idempotency (second destroy is a no-op)", d)
+		}
+	}
+
+	// 18 — A: service gone, bridge gone, iptables clean
+	{
+		start := time.Now()
+		aClean := true
+		var aCleanMsgs []string
+
+		_, _, c1 := run(client, "systemctl is-active "+allInstances[0].Prefix+"docker")
+		if c1 == 0 {
+			aClean = false
+			aCleanMsgs = append(aCleanMsgs, "service still active")
+		}
+		_, _, c2 := run(client, "ip link show "+allInstances[0].Prefix+"docker0")
+		if c2 == 0 {
+			aClean = false
+			aCleanMsgs = append(aCleanMsgs, "bridge still exists")
+		}
+		ipt, _, _ := run(client, "iptables-save | grep -F "+allInstances[0].Prefix+" || true")
+		if strings.Contains(ipt, allInstances[0].Prefix) {
+			aClean = false
+			aCleanMsgs = append(aCleanMsgs, "residual iptables rules")
+		}
+		d := time.Since(start)
+		if aClean {
+			pass(18, "A: fully cleaned up (service+bridge+iptables)", d)
+		} else {
+			fail(18, "A: fully cleaned up", strings.Join(aCleanMsgs, ", "), d)
+		}
+	}
+
+	// 19 — B+C: still healthy after A destroy (container + ping)
+	surviving := allInstances[1:]
+	{
+		start := time.Now()
+		rs = forAll(client, surviving, func(c *ssh.Client, inst Instance) (bool, string) {
+			out, se, code := run(c, fmt.Sprintf("sudo DOCKER_HOST=unix://%s docker run --rm alpine ping -c3 1.1.1.1", inst.Socket))
+			if code != 0 || strings.Contains(out, "100% packet loss") {
+				return false, out + se
+			}
+			return true, ""
+		})
+		d := time.Since(start)
+		if allOK(rs) {
+			pass(19, "B+C: still healthy after A destroy", d)
+		} else {
+			fail(19, "B+C: still healthy after A destroy", failMsgs(rs), d)
+		}
+	}
+
+	//
+	// ── Phase 10: Reboot — all surviving instances must come back ─────────────
+	//
+
+	// 20 — reboot
+	{
+		start := time.Now()
+		fmt.Println("[INFO] Rebooting host...")
+		run(client, "sudo reboot")
+		client.Close()
+		time.Sleep(15 * time.Second) // wait for it to actually go down
+
+		fmt.Println("[INFO] Waiting for SSH (up to 4min)...")
+		if err := waitForSSH(host, 4*time.Minute); err != nil {
+			fail(20, "reboot", err.Error(), time.Since(start))
+			return
+		}
+		// Give systemd a few seconds to finish starting services
+		time.Sleep(10 * time.Second)
+
+		var reconnErr error
+		client, reconnErr = dialSSH(host, user, keyPath)
+		if reconnErr != nil {
+			fail(20, "reboot", "could not reconnect: "+reconnErr.Error(), time.Since(start))
+			return
+		}
+		pass(20, "reboot", time.Since(start))
+	}
+
+	// 21 — post-reboot: shared sysbox active + B+C docker services active (concurrent)
+	{
+		start := time.Now()
 		_, _, sc := run(client, "systemctl is-active dockyard-sysbox")
 		rs = forAll(client, surviving, func(c *ssh.Client, inst Instance) (bool, string) {
 			_, _, c1 := run(c, "systemctl is-active "+inst.Prefix+"docker")
@@ -554,148 +706,179 @@ func runTests(client *ssh.Client, host, user, keyPath string) {
 			}
 			return true, ""
 		})
+		d := time.Since(start)
 		if sc != 0 {
-			fail(18, "post-reboot: B+C services active", "dockyard-sysbox shared service not active")
+			fail(21, "post-reboot: B+C services active", "dockyard-sysbox shared service not active", d)
 		} else if allOK(rs) {
-			pass(18, "post-reboot: B+C services active")
+			pass(21, "post-reboot: B+C services active", d)
 		} else {
-			fail(18, "post-reboot: B+C services active", failMsgs(rs))
+			fail(21, "post-reboot: B+C services active", failMsgs(rs), d)
 		}
 	}
 
-	// 19 — post-reboot: B+C containers run (concurrent)
-	rs = forAll(client, surviving, func(c *ssh.Client, inst Instance) (bool, string) {
-		out, se, code := run(c, fmt.Sprintf("DOCKER_HOST=unix://%s docker run --rm alpine echo hello", inst.Socket))
-		if code != 0 || !strings.Contains(out, "hello") {
-			return false, se
-		}
-		return true, ""
-	})
-	if allOK(rs) {
-		pass(19, "post-reboot: B+C container run")
-	} else {
-		fail(19, "post-reboot: B+C container run", failMsgs(rs))
-	}
-
-	// 20 — post-reboot: B+C outbound networking (concurrent)
-	rs = forAll(client, surviving, func(c *ssh.Client, inst Instance) (bool, string) {
-		out, se, code := run(c, fmt.Sprintf("DOCKER_HOST=unix://%s docker run --rm alpine ping -c3 1.1.1.1", inst.Socket))
-		if code != 0 || strings.Contains(out, "100% packet loss") {
-			return false, out + se
-		}
-		return true, ""
-	})
-	if allOK(rs) {
-		pass(20, "post-reboot: B+C outbound networking")
-	} else {
-		fail(20, "post-reboot: B+C outbound networking", failMsgs(rs))
-	}
-
-	// 21 — post-reboot: B+C DinD full (start + inner container + inner ping, concurrent)
-	rs = forAll(client, surviving, func(c *ssh.Client, inst Instance) (bool, string) {
-		cname := "dind-post-" + strings.ToLower(inst.Label)
-		run(c, fmt.Sprintf("DOCKER_HOST=unix://%s docker rm -f %s 2>/dev/null", inst.Socket, cname))
-
-		_, se, code := run(c, fmt.Sprintf("DOCKER_HOST=unix://%s docker run -d --name %s docker:26.1-dind", inst.Socket, cname))
-		if code != 0 {
-			return false, "start: " + se
-		}
-		// Wait for inner dockerd
-		ready := false
-		for i := 0; i < 60; i++ {
-			_, _, c2 := run(c, fmt.Sprintf("DOCKER_HOST=unix://%s docker exec %s docker info", inst.Socket, cname))
-			if c2 == 0 {
-				ready = true
-				break
+	// 22 — post-reboot: B+C containers run (concurrent)
+	{
+		start := time.Now()
+		rs = forAll(client, surviving, func(c *ssh.Client, inst Instance) (bool, string) {
+			out, se, code := run(c, fmt.Sprintf("sudo DOCKER_HOST=unix://%s docker run --rm alpine echo hello", inst.Socket))
+			if code != 0 || !strings.Contains(out, "hello") {
+				return false, se
 			}
-			time.Sleep(2 * time.Second)
-		}
-		if !ready {
-			return false, "inner dockerd did not start within 120s"
-		}
-		// Inner container
-		out, se, code := run(c, fmt.Sprintf(
-			"DOCKER_HOST=unix://%s docker exec %s docker run --rm alpine echo inner-hello",
-			inst.Socket, cname,
-		))
-		if code != 0 || !strings.Contains(out, "inner-hello") {
-			return false, "inner container: " + se
-		}
-		// Inner networking
-		out, se, code = run(c, fmt.Sprintf(
-			"DOCKER_HOST=unix://%s docker exec %s docker run --rm alpine ping -c3 1.1.1.1",
-			inst.Socket, cname,
-		))
-		if code != 0 || strings.Contains(out, "100% packet loss") {
-			return false, "inner networking: " + out + se
-		}
-		run(c, fmt.Sprintf("DOCKER_HOST=unix://%s docker rm -f %s 2>/dev/null", inst.Socket, cname))
-		return true, ""
-	})
-	if allOK(rs) {
-		pass(21, "post-reboot: B+C DinD (start + inner container + inner networking)")
-	} else {
-		fail(21, "post-reboot: B+C DinD", failMsgs(rs))
-	}
-
-	//
-	// ── Phase 10: Destroy remaining instances ─────────────────────────────────
-	//
-
-	// 22-23 — destroy B and C sequentially (avoid systemd race)
-	for i, inst := range surviving {
-		num := 22 + i
-		_, se, code := run(client, fmt.Sprintf("DOCKYARD_ENV=%s sudo -E ~/dockyard.sh destroy --yes", inst.EnvFile))
-		if code != 0 {
-			fail(num, fmt.Sprintf("destroy %s", inst.Label), se)
+			return true, ""
+		})
+		d := time.Since(start)
+		if allOK(rs) {
+			pass(22, "post-reboot: B+C container run", d)
 		} else {
-			pass(num, fmt.Sprintf("destroy %s", inst.Label))
+			fail(22, "post-reboot: B+C container run", failMsgs(rs), d)
 		}
 	}
 
-	// 24 — full cleanup: no services, bridges, iptables rules, data dirs, shared sysbox
-	var cleanFails []string
-	for _, inst := range surviving {
-		// per-instance docker service
-		_, _, c := run(client, "systemctl is-active "+inst.Prefix+"docker")
+	// 23 — post-reboot: B+C outbound networking (concurrent)
+	{
+		start := time.Now()
+		rs = forAll(client, surviving, func(c *ssh.Client, inst Instance) (bool, string) {
+			out, se, code := run(c, fmt.Sprintf("sudo DOCKER_HOST=unix://%s docker run --rm alpine ping -c3 1.1.1.1", inst.Socket))
+			if code != 0 || strings.Contains(out, "100% packet loss") {
+				return false, out + se
+			}
+			return true, ""
+		})
+		d := time.Since(start)
+		if allOK(rs) {
+			pass(23, "post-reboot: B+C outbound networking", d)
+		} else {
+			fail(23, "post-reboot: B+C outbound networking", failMsgs(rs), d)
+		}
+	}
+
+	// 24 — post-reboot: B+C DinD full (start + inner container + inner ping, concurrent)
+	{
+		start := time.Now()
+		rs = forAll(client, surviving, func(c *ssh.Client, inst Instance) (bool, string) {
+			cname := "dind-post-" + strings.ToLower(inst.Label)
+			run(c, fmt.Sprintf("sudo DOCKER_HOST=unix://%s docker rm -f %s 2>/dev/null", inst.Socket, cname))
+
+			_, se, code := run(c, fmt.Sprintf("sudo DOCKER_HOST=unix://%s docker run -d --name %s docker:26.1-dind", inst.Socket, cname))
+			if code != 0 {
+				return false, "start: " + se
+			}
+			// Wait for inner dockerd
+			ready := false
+			for i := 0; i < 60; i++ {
+				_, _, c2 := run(c, fmt.Sprintf("sudo DOCKER_HOST=unix://%s docker exec %s docker info", inst.Socket, cname))
+				if c2 == 0 {
+					ready = true
+					break
+				}
+				time.Sleep(2 * time.Second)
+			}
+			if !ready {
+				return false, "inner dockerd did not start within 120s"
+			}
+			// Inner container
+			out, se, code := run(c, fmt.Sprintf(
+				"sudo DOCKER_HOST=unix://%s docker exec %s docker run --rm alpine echo inner-hello",
+				inst.Socket, cname,
+			))
+			if code != 0 || !strings.Contains(out, "inner-hello") {
+				return false, "inner container: " + se
+			}
+			// Inner networking
+			out, se, code = run(c, fmt.Sprintf(
+				"sudo DOCKER_HOST=unix://%s docker exec %s docker run --rm alpine ping -c3 1.1.1.1",
+				inst.Socket, cname,
+			))
+			if code != 0 || strings.Contains(out, "100% packet loss") {
+				return false, "inner networking: " + out + se
+			}
+			run(c, fmt.Sprintf("sudo DOCKER_HOST=unix://%s docker rm -f %s 2>/dev/null", inst.Socket, cname))
+			return true, ""
+		})
+		d := time.Since(start)
+		if allOK(rs) {
+			pass(24, "post-reboot: B+C DinD (start + inner container + inner networking)", d)
+		} else {
+			fail(24, "post-reboot: B+C DinD", failMsgs(rs), d)
+		}
+	}
+
+	//
+	// ── Phase 11: Destroy remaining instances ─────────────────────────────────
+	//
+
+	// 25-26 — destroy B and C sequentially (avoid systemd race)
+	for i, inst := range surviving {
+		num := 25 + i
+		start := time.Now()
+		_, se, code := run(client, fmt.Sprintf("DOCKYARD_ENV=%s sudo -E ~/dockyard.sh destroy --yes", inst.EnvFile))
+		d := time.Since(start)
+		if code != 0 {
+			fail(num, fmt.Sprintf("destroy %s", inst.Label), se, d)
+		} else {
+			pass(num, fmt.Sprintf("destroy %s", inst.Label), d)
+		}
+	}
+
+	// 27 — full cleanup: no services, bridges, iptables rules, data dirs, shared sysbox
+	{
+		start := time.Now()
+		var cleanFails []string
+		for _, inst := range surviving {
+			// per-instance docker service
+			_, _, c := run(client, "systemctl is-active "+inst.Prefix+"docker")
+			if c == 0 {
+				cleanFails = append(cleanFails, inst.Label+": docker service still active")
+			}
+			// bridge
+			_, _, c = run(client, "ip link show "+inst.Prefix+"docker0")
+			if c == 0 {
+				cleanFails = append(cleanFails, inst.Label+": bridge still exists")
+			}
+			// iptables
+			ipt, _, _ := run(client, "iptables-save | grep -F "+inst.Prefix+" || true")
+			if strings.Contains(ipt, inst.Prefix) {
+				cleanFails = append(cleanFails, inst.Label+": residual iptables rules")
+			}
+			// data directory
+			out, _, _ := run(client, fmt.Sprintf("[ -d %s ] && echo exists || echo gone", inst.Root))
+			if strings.TrimSpace(out) == "exists" {
+				cleanFails = append(cleanFails, inst.Label+": "+inst.Root+" still exists")
+			}
+		}
+		// shared sysbox service gone
+		_, _, c := run(client, "systemctl is-active dockyard-sysbox")
 		if c == 0 {
-			cleanFails = append(cleanFails, inst.Label+": docker service still active")
+			cleanFails = append(cleanFails, "dockyard-sysbox shared service still active")
 		}
-		// bridge
-		_, _, c = run(client, "ip link show "+inst.Prefix+"docker0")
-		if c == 0 {
-			cleanFails = append(cleanFails, inst.Label+": bridge still exists")
-		}
-		// iptables
-		ipt, _, _ := run(client, "iptables-save | grep -F "+inst.Prefix+" || true")
-		if strings.Contains(ipt, inst.Prefix) {
-			cleanFails = append(cleanFails, inst.Label+": residual iptables rules")
-		}
-		// data directory
-		out, _, _ := run(client, fmt.Sprintf("[ -d %s ] && echo exists || echo gone", inst.Root))
+		// shared sysbox data dir gone
+		out, _, _ := run(client, "[ -d /var/lib/dockyard-sysbox ] && echo exists || echo gone")
 		if strings.TrimSpace(out) == "exists" {
-			cleanFails = append(cleanFails, inst.Label+": "+inst.Root+" still exists")
+			cleanFails = append(cleanFails, "/var/lib/dockyard-sysbox still exists")
 		}
-	}
-	// shared sysbox service gone
-	_, _, c := run(client, "systemctl is-active dockyard-sysbox")
-	if c == 0 {
-		cleanFails = append(cleanFails, "dockyard-sysbox shared service still active")
-	}
-	// shared sysbox data dir gone
-	out, _, _ := run(client, "[ -d /var/lib/dockyard-sysbox ] && echo exists || echo gone")
-	if strings.TrimSpace(out) == "exists" {
-		cleanFails = append(cleanFails, "/var/lib/dockyard-sysbox still exists")
-	}
-	// shared sysbox bin dir gone
-	out, _, _ = run(client, "[ -d /usr/local/lib/dockyard ] && echo exists || echo gone")
-	if strings.TrimSpace(out) == "exists" {
-		cleanFails = append(cleanFails, "/usr/local/lib/dockyard still exists")
-	}
-	if len(cleanFails) == 0 {
-		pass(24, "full cleanup: no services, bridges, iptables, data dirs, or shared sysbox")
-	} else {
-		fail(24, "full cleanup", strings.Join(cleanFails, " | "))
+		// shared sysbox bin dir gone
+		out, _, _ = run(client, "[ -d /usr/local/lib/dockyard ] && echo exists || echo gone")
+		if strings.TrimSpace(out) == "exists" {
+			cleanFails = append(cleanFails, "/usr/local/lib/dockyard still exists")
+		}
+		// instance users and groups removed
+		for _, inst := range surviving {
+			instanceUser := inst.Prefix + "docker"
+			_, _, cu := run(client, "getent passwd "+instanceUser)
+			if cu == 0 {
+				cleanFails = append(cleanFails, inst.Label+": system user "+instanceUser+" still exists")
+			}
+			_, _, cg := run(client, "getent group "+instanceUser)
+			if cg == 0 {
+				cleanFails = append(cleanFails, inst.Label+": system group "+instanceUser+" still exists")
+			}
+		}
+		d := time.Since(start)
+		if len(cleanFails) == 0 {
+			pass(27, "full cleanup: no services, bridges, iptables, data dirs, users, or shared sysbox", d)
+		} else {
+			fail(27, "full cleanup", strings.Join(cleanFails, " | "), d)
+		}
 	}
 }
 
@@ -711,9 +894,9 @@ func checkIsolation(client *ssh.Client, instances []Instance) []string {
 	var containers []cinfo
 	for _, inst := range instances {
 		name := "iso-" + strings.ToLower(inst.Label) + "-check"
-		run(client, fmt.Sprintf("DOCKER_HOST=unix://%s docker rm -f %s 2>/dev/null", inst.Socket, name))
+		run(client, fmt.Sprintf("sudo DOCKER_HOST=unix://%s docker rm -f %s 2>/dev/null", inst.Socket, name))
 		_, _, code := run(client, fmt.Sprintf(
-			"DOCKER_HOST=unix://%s docker run -d --name %s alpine sleep 60",
+			"sudo DOCKER_HOST=unix://%s docker run -d --name %s alpine sleep 60",
 			inst.Socket, name,
 		))
 		if code == 0 {
@@ -728,7 +911,7 @@ func checkIsolation(client *ssh.Client, instances []Instance) []string {
 				continue
 			}
 			out, _, _ := run(client, fmt.Sprintf(
-				"DOCKER_HOST=unix://%s docker ps -a --format '{{.Names}}'",
+				"sudo DOCKER_HOST=unix://%s docker ps -a --format '{{.Names}}'",
 				viewer.Socket,
 			))
 			if strings.Contains(out, src.name) {
@@ -742,7 +925,7 @@ func checkIsolation(client *ssh.Client, instances []Instance) []string {
 
 	// Cleanup
 	for _, c := range containers {
-		run(client, fmt.Sprintf("DOCKER_HOST=unix://%s docker rm -f %s 2>/dev/null", c.inst.Socket, c.name))
+		run(client, fmt.Sprintf("sudo DOCKER_HOST=unix://%s docker rm -f %s 2>/dev/null", c.inst.Socket, c.name))
 	}
 	return fails
 }
@@ -774,9 +957,11 @@ func main() {
 	_, cancel := context.WithTimeout(context.Background(), *timeoutFlag)
 	defer cancel()
 
+	suiteStart := time.Now()
 	runTests(client, *hostFlag, *userFlag, kp)
+	totalElapsed := time.Since(suiteStart)
 
-	total := 24 // total expected tests
+	total := 27 // total expected tests
 	passed := 0
 	for _, r := range results {
 		if r.Passed {
@@ -788,7 +973,7 @@ func main() {
 	if skipped > 0 {
 		fmt.Printf(", %d skipped (earlier failure)", skipped)
 	}
-	fmt.Println(" ===")
+	fmt.Printf(" — total %s ===\n", fmtDur(totalElapsed))
 
 	if passed < len(results) {
 		os.Exit(1)
