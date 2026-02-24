@@ -161,6 +161,7 @@ cmd_start() {
         --default-address-pool "base=${DOCKYARD_POOL_BASE},size=${DOCKYARD_POOL_SIZE}" \
         --host "unix://${DOCKER_SOCKET}" \
         --iptables=false \
+        --group "${INSTANCE_GROUP}" \
         &>"${LOG_DIR}/dockerd.log" &
     DOCKERD_PID=$!
     STARTED_PIDS+=("$DOCKERD_PID")

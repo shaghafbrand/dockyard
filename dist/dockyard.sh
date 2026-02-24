@@ -61,6 +61,10 @@ derive_vars() {
     CONTAINERD_SOCKET="${EXEC_ROOT}/containerd/containerd.sock"
     DOCKER_DATA="${DOCKYARD_ROOT}/docker"
 
+    # Per-instance system user and group (socket ownership + access control)
+    INSTANCE_USER="${DOCKYARD_DOCKER_PREFIX}docker"
+    INSTANCE_GROUP="${DOCKYARD_DOCKER_PREFIX}docker"
+
     # Shared sysbox daemon (one per host, not per instance)
     SYSBOX_SERVICE_NAME="dockyard-sysbox"
     SYSBOX_SHARED_BIN="/usr/local/lib/dockyard"
@@ -401,6 +405,8 @@ cmd_create() {
     echo "  runtime:     ${RUNTIME_DIR}"
     echo "  data:        ${DOCKER_DATA}"
     echo "  socket:      ${DOCKER_SOCKET}"
+    echo "  user:        ${INSTANCE_USER}"
+    echo "  group:       ${INSTANCE_GROUP}"
     echo ""
 
     # --- Check for existing installation ---
@@ -442,6 +448,23 @@ cmd_create() {
     mkdir -p "$CACHE_DIR"
     mkdir -p /run/sysbox
     mkdir -p "$SYSBOX_SHARED_BIN" "$SYSBOX_SHARED_DATA" "$SYSBOX_SHARED_LOG"
+
+    # Create system user and group for this instance.
+    # dockerd runs as root but creates the socket owned by this group (--group flag),
+    # so operators simply join the group to get socket access without sudo.
+    if ! getent group "${INSTANCE_GROUP}" &>/dev/null; then
+        groupadd --system "${INSTANCE_GROUP}"
+        echo "  Created group ${INSTANCE_GROUP}"
+    else
+        echo "  Group ${INSTANCE_GROUP} already exists"
+    fi
+    if ! getent passwd "${INSTANCE_USER}" &>/dev/null; then
+        useradd --system --no-create-home --shell /bin/false \
+            --gid "${INSTANCE_GROUP}" "${INSTANCE_USER}"
+        echo "  Created user ${INSTANCE_USER}"
+    else
+        echo "  User ${INSTANCE_USER} already exists"
+    fi
 
     # Allow sysbox-fs FUSE mounts at the dockyard sysbox mountpoint.
     # The default fusermount3 AppArmor profile (tightened in Ubuntu 25.10+)
@@ -535,6 +558,12 @@ DAEMONJSONEOF
     chmod +x "${BIN_DIR}/dockyardctl"
     echo "Installed env to ${ETC_DIR}/dockyard.env"
     echo "Installed dockyardctl to ${BIN_DIR}/dockyardctl"
+
+    # Set ownership of the instance root so every file is attributed to the
+    # instance user/group. dockerd still runs as root, so it can write freely;
+    # the ownership is for identification and directory-level access control.
+    chown -R "${INSTANCE_USER}:${INSTANCE_GROUP}" "${DOCKYARD_ROOT}"
+    echo "Set ownership of ${DOCKYARD_ROOT}/ to ${INSTANCE_USER}:${INSTANCE_GROUP}"
 
     # --- 2. Install systemd service ---
     if [ "$INSTALL_SYSTEMD" = true ]; then
@@ -666,7 +695,7 @@ ExecStartPre=/bin/bash -c 'iptables -I FORWARD -s ${DOCKYARD_POOL_BASE} -j ACCEP
 ExecStartPre=/bin/bash -c '${BIN_DIR}/containerd --root ${DOCKER_DATA}/containerd --state ${EXEC_ROOT}/containerd --address ${CONTAINERD_SOCKET} &>${LOG_DIR}/containerd.log & echo \$! > ${RUN_DIR}/containerd.pid; i=0; while [ ! -e ${CONTAINERD_SOCKET} ]; do sleep 1; i=\$((i+1)); if [ \$i -ge 30 ]; then echo "containerd did not start within 30s" >&2; exit 1; fi; done'
 
 # Start dockerd
-ExecStart=/bin/bash -c '${BIN_DIR}/dockerd --config-file ${ETC_DIR}/daemon.json --containerd ${CONTAINERD_SOCKET} --data-root ${DOCKER_DATA} --exec-root ${EXEC_ROOT} --pidfile ${EXEC_ROOT}/dockerd.pid --bridge ${BRIDGE} --fixed-cidr ${DOCKYARD_FIXED_CIDR} --default-address-pool base=${DOCKYARD_POOL_BASE},size=${DOCKYARD_POOL_SIZE} --host unix://${DOCKER_SOCKET} --iptables=false &>${LOG_DIR}/dockerd.log & i=0; while [ ! -e ${DOCKER_SOCKET} ]; do sleep 1; i=\$((i+1)); if [ \$i -ge 30 ]; then echo "dockerd did not start within 30s" >&2; exit 1; fi; done'
+ExecStart=/bin/bash -c '${BIN_DIR}/dockerd --config-file ${ETC_DIR}/daemon.json --containerd ${CONTAINERD_SOCKET} --data-root ${DOCKER_DATA} --exec-root ${EXEC_ROOT} --pidfile ${EXEC_ROOT}/dockerd.pid --bridge ${BRIDGE} --fixed-cidr ${DOCKYARD_FIXED_CIDR} --default-address-pool base=${DOCKYARD_POOL_BASE},size=${DOCKYARD_POOL_SIZE} --host unix://${DOCKER_SOCKET} --iptables=false --group ${INSTANCE_GROUP} &>${LOG_DIR}/dockerd.log & i=0; while [ ! -e ${DOCKER_SOCKET} ]; do sleep 1; i=\$((i+1)); if [ \$i -ge 30 ]; then echo "dockerd did not start within 30s" >&2; exit 1; fi; done'
 
 # Start DinD ownership watcher (fixes sysbox uid mapping for Docker 29+)
 ExecStartPost=/bin/bash -c 'SYSBOX_UID_OFFSET=\$(awk -F: '"'"'\$1=="sysbox"{print \$2;exit}'"'"' /etc/subuid 2>/dev/null || echo 231072); SYSBOX_DOCKER_DIR=${SYSBOX_SHARED_DATA}/docker; mkdir -p "\$SYSBOX_DOCKER_DIR"; find "\$SYSBOX_DOCKER_DIR" -maxdepth 1 -mindepth 1 -uid 0 -exec chown "\${SYSBOX_UID_OFFSET}:\${SYSBOX_UID_OFFSET}" {} \; 2>/dev/null || true; (while true; do for d in "\$SYSBOX_DOCKER_DIR"/*/; do [ -d "\$d" ] || continue; uid=\$(stat -c "%u" "\$d" 2>/dev/null) || continue; [ "\$uid" = "0" ] && chown "\${SYSBOX_UID_OFFSET}:\${SYSBOX_UID_OFFSET}" "\$d" 2>/dev/null; done; sleep 1; done) & echo \$! > ${RUN_DIR}/dind-watcher.pid'
@@ -927,6 +956,7 @@ cmd_start() {
         --default-address-pool "base=${DOCKYARD_POOL_BASE},size=${DOCKYARD_POOL_SIZE}" \
         --host "unix://${DOCKER_SOCKET}" \
         --iptables=false \
+        --group "${INSTANCE_GROUP}" \
         &>"${LOG_DIR}/dockerd.log" &
     DOCKERD_PID=$!
     STARTED_PIDS+=("$DOCKERD_PID")
@@ -1222,6 +1252,16 @@ cmd_destroy() {
         else
             echo "Note: ${DOCKYARD_ROOT}/ not empty, left in place"
         fi
+    fi
+
+    # --- 9. Remove instance user and group ---
+    if getent passwd "${INSTANCE_USER}" &>/dev/null; then
+        userdel "${INSTANCE_USER}" 2>/dev/null || true
+        echo "Removed user ${INSTANCE_USER}"
+    fi
+    if getent group "${INSTANCE_GROUP}" &>/dev/null; then
+        groupdel "${INSTANCE_GROUP}" 2>/dev/null || true
+        echo "Removed group ${INSTANCE_GROUP}"
     fi
 
     echo ""

@@ -26,6 +26,8 @@ cmd_create() {
     echo "  runtime:     ${RUNTIME_DIR}"
     echo "  data:        ${DOCKER_DATA}"
     echo "  socket:      ${DOCKER_SOCKET}"
+    echo "  user:        ${INSTANCE_USER}"
+    echo "  group:       ${INSTANCE_GROUP}"
     echo ""
 
     # --- Check for existing installation ---
@@ -67,6 +69,23 @@ cmd_create() {
     mkdir -p "$CACHE_DIR"
     mkdir -p /run/sysbox
     mkdir -p "$SYSBOX_SHARED_BIN" "$SYSBOX_SHARED_DATA" "$SYSBOX_SHARED_LOG"
+
+    # Create system user and group for this instance.
+    # dockerd runs as root but creates the socket owned by this group (--group flag),
+    # so operators simply join the group to get socket access without sudo.
+    if ! getent group "${INSTANCE_GROUP}" &>/dev/null; then
+        groupadd --system "${INSTANCE_GROUP}"
+        echo "  Created group ${INSTANCE_GROUP}"
+    else
+        echo "  Group ${INSTANCE_GROUP} already exists"
+    fi
+    if ! getent passwd "${INSTANCE_USER}" &>/dev/null; then
+        useradd --system --no-create-home --shell /bin/false \
+            --gid "${INSTANCE_GROUP}" "${INSTANCE_USER}"
+        echo "  Created user ${INSTANCE_USER}"
+    else
+        echo "  User ${INSTANCE_USER} already exists"
+    fi
 
     # Allow sysbox-fs FUSE mounts at the dockyard sysbox mountpoint.
     # The default fusermount3 AppArmor profile (tightened in Ubuntu 25.10+)
@@ -161,6 +180,12 @@ DAEMONJSONEOF
     chmod +x "${BIN_DIR}/dockyardctl"
     echo "Installed env to ${ETC_DIR}/dockyard.env"
     echo "Installed dockyardctl to ${BIN_DIR}/dockyardctl"
+
+    # Set ownership of the instance root so every file is attributed to the
+    # instance user/group. dockerd still runs as root, so it can write freely;
+    # the ownership is for identification and directory-level access control.
+    chown -R "${INSTANCE_USER}:${INSTANCE_GROUP}" "${DOCKYARD_ROOT}"
+    echo "Set ownership of ${DOCKYARD_ROOT}/ to ${INSTANCE_USER}:${INSTANCE_GROUP}"
 
     # --- 2. Install systemd service ---
     if [ "$INSTALL_SYSTEMD" = true ]; then

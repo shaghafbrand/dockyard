@@ -56,6 +56,10 @@ derive_vars() {
     CONTAINERD_SOCKET="${EXEC_ROOT}/containerd/containerd.sock"
     DOCKER_DATA="${DOCKYARD_ROOT}/docker"
 
+    # Per-instance system user and group (socket ownership + access control)
+    INSTANCE_USER="${DOCKYARD_DOCKER_PREFIX}docker"
+    INSTANCE_GROUP="${DOCKYARD_DOCKER_PREFIX}docker"
+
     # Shared sysbox daemon (one per host, not per instance)
     SYSBOX_SERVICE_NAME="dockyard-sysbox"
     SYSBOX_SHARED_BIN="/usr/local/lib/dockyard"

@@ -131,6 +131,16 @@ cmd_destroy() {
         fi
     fi
 
+    # --- 9. Remove instance user and group ---
+    if getent passwd "${INSTANCE_USER}" &>/dev/null; then
+        userdel "${INSTANCE_USER}" 2>/dev/null || true
+        echo "Removed user ${INSTANCE_USER}"
+    fi
+    if getent group "${INSTANCE_GROUP}" &>/dev/null; then
+        groupdel "${INSTANCE_GROUP}" 2>/dev/null || true
+        echo "Removed group ${INSTANCE_GROUP}"
+    fi
+
     echo ""
     echo "=== Uninstall complete ==="
 }
