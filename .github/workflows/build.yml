@@ -1,0 +1,56 @@
+name: Build
+
+on:
+  push:
+    branches:
+      - dockyard
+
+jobs:
+  build-script:
+    name: Build dockyard.sh
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build dist/dockyard.sh
+        run: ./build.sh
+
+      - name: Upload dockyard.sh
+        uses: actions/upload-artifact@v4
+        with:
+          name: dockyard.sh
+          path: dist/dockyard.sh
+
+  build-dockyardtest:
+    name: Build dockyardtest (${{ matrix.goarch }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goarch: amd64
+            suffix: x86_64
+          - goarch: arm64
+            suffix: aarch64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build static binary
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          go build -trimpath -ldflags="-s -w" \
+            -o dockyardtest-linux-${{ matrix.suffix }} \
+            ./cmd/dockyardtest
+
+      - name: Upload dockyardtest-linux-${{ matrix.suffix }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: dockyardtest-linux-${{ matrix.suffix }}
+          path: dockyardtest-linux-${{ matrix.suffix }}
