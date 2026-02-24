@@ -4,7 +4,7 @@
 
 **Date**: 2026-02-23
 **Severity**: Architectural blocker for naive per-instance sysbox
-**Status**: RESOLVED — forked sysbox (0.6.7.2-tc)
+**Status**: RESOLVED — forked sysbox (0.6.7.4-tc)
 
 `sysbox-fs` and `sysbox-mgr` have NO flag to change their socket paths:
 - `/run/sysbox/sysfs.sock` — hardcoded in sysbox-fs
@@ -26,7 +26,7 @@ An intermediate architecture used a single shared `dockyard-sysbox.service` per 
 
 ### Final solution: Fork sysbox to add `--run-dir`
 
-The fork (`github.com/thieso2/sysbox`, version `0.6.7.2-tc`) adds:
+The fork (`github.com/thieso2/sysbox`, version `0.6.7.4-tc`) adds:
 - `--run-dir <dir>` flag to `sysbox-mgr` and `sysbox-fs` — configures the socket/pid directory
 - `SYSBOX_RUN_DIR` environment variable support in `sysbox-runc`
 
@@ -102,6 +102,38 @@ openat2 /proc/./sys/net/ipv4/ip_unprivileged_port_start: invalid cross-device li
 Containers in instance A can reach instance B's bridge IP. This is expected Linux behaviour — the kernel routes between all bridge interfaces on the same host. No `FORWARD DROP` rules exist between dockyard bridges.
 
 **Verdict**: Not a bug. Dockyard's isolation is at the **daemon/socket/data** level, not at the network level. The isolation test was incorrectly expecting network-level isolation. Replaced with daemon-level isolation test (containers from A not visible in B's `docker ps`).
+
+---
+
+## sysbox-runc --run-dir CLI flag: seccomp socket not redirected (0.6.7.4-tc)
+
+**Date**: 2026-02-24
+**Severity**: Containers fail to start when `--run-dir` is used via `runtimeArgs`
+**Status**: Open — tracked in https://github.com/thieso2/sysbox/issues/4
+
+### Symptom
+
+When `daemon.json` passes `--run-dir` via `runtimeArgs`, containers fail with:
+
+```
+container_linux.go:2573: sending seccomp fd to sysbox-fs caused:
+Unable to establish connection with seccomp-tracer:
+dial unix /run/sysbox/sysfs-seccomp.sock: connect: no such file or directory
+```
+
+### Root cause: init() vs app.Before() timing
+
+`sysbox-runc` processes `--run-dir` in `app.Before`, which fires after all `init()` functions have run. The `sysfs-seccomp.sock` path is computed at init time from the default `runDir = "/run/sysbox"` and is not updated when `SetRunDir` is later called from `app.Before`.
+
+`SYSBOX_RUN_DIR` env var works correctly because `sysbox.go`'s `init()` calls `SetRunDir()` before any socket path is fixed — so all three sockets (sysmgr, sysfs, sysfs-seccomp) pick up the correct directory.
+
+### Workaround
+
+Install sysbox-runc as a wrapper script that exports `SYSBOX_RUN_DIR` before exec'ing the real binary. The env var path correctly redirects all sockets including the seccomp tracer.
+
+### Fix needed
+
+`SetRunDir()` (or the seccomp socket path construction) must also update `sysfs-seccomp.sock` to use the provided dir, not the initial `/run/sysbox` default.
 
 ---
 

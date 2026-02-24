@@ -93,13 +93,13 @@ Defined in `cmd_create()`, cached in `.tmp/`:
 |----------|---------|--------|
 | Docker CE (static) | 29.2.1 | download.docker.com |
 | Docker Rootless Extras | 29.2.1 | download.docker.com |
-| Sysbox (fork, static tarball) | 0.6.7.2-tc | github.com/thieso2/sysbox |
+| Sysbox (fork, static tarball) | 0.6.7.4-tc | github.com/thieso2/sysbox |
 
 `dpkg-deb` is no longer needed. The fork ships as a static tarball containing all three binaries (`sysbox-mgr`, `sysbox-fs`, `sysbox-runc-bin`).
 
-### Per-Instance Sysbox Daemon (0.6.7.2-tc fork)
+### Per-Instance Sysbox Daemon (0.6.7.4-tc fork)
 
-Nestybox sysbox 0.6.7 CE hardcodes its socket paths (`/run/sysbox/sysmgr.sock`, `/run/sysbox/sysfs.sock`) with no flag to override them. The fork (`github.com/thieso2/sysbox`, version `0.6.7.2-tc`) adds:
+Nestybox sysbox 0.6.7 CE hardcodes its socket paths (`/run/sysbox/sysmgr.sock`, `/run/sysbox/sysfs.sock`) with no flag to override them. The fork (`github.com/thieso2/sysbox`, version `0.6.7.4-tc`) adds:
 
 1. `--run-dir <dir>` flag to `sysbox-mgr` and `sysbox-fs` — sets the directory for sockets and PID files
 2. `SYSBOX_RUN_DIR` environment variable support in `sysbox-runc` — read at startup in `libsysbox/sysbox/sysbox.go` `init()`, calls `SetSockAddr()` on both gRPC clients

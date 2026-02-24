@@ -86,7 +86,7 @@ Because every rule references `${BRIDGE}` (e.g. `dy1_docker0`), instances are ma
 
 There is no flag to change them. Running two sysbox-mgr processes on the same host is physically impossible — they fight over the same socket file. An earlier architecture worked around this by using a single shared `dockyard-sysbox.service`, but that means all instances share one sysbox process.
 
-**The solution: fork sysbox.** The fork (`github.com/thieso2/sysbox`, version `0.6.7.2-tc`) adds two capabilities:
+**The solution: fork sysbox.** The fork (`github.com/thieso2/sysbox`, version `0.6.7.4-tc`) adds two capabilities:
 
 1. `--run-dir <dir>` flag on `sysbox-mgr` and `sysbox-fs` — sets the directory for socket files and PID files
 2. `SYSBOX_RUN_DIR` environment variable in `sysbox-runc` — consumed in `libsysbox/sysbox/sysbox.go` `init()`, calls `SetSockAddr()` on both gRPC clients
@@ -131,7 +131,7 @@ Versions are pinned explicitly in `cmd_create()`:
 |--------|---------|--------|
 | Docker CE static | 29.2.1 | download.docker.com |
 | Docker Rootless Extras | 29.2.1 | download.docker.com |
-| Sysbox fork (static tarball) | 0.6.7.2-tc | github.com/thieso2/sysbox |
+| Sysbox fork (static tarball) | 0.6.7.4-tc | github.com/thieso2/sysbox |
 
 ---
 
