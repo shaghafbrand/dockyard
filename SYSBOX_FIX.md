@@ -1,16 +1,24 @@
 # Sysbox Bundled Service Fix
 
-> **ARCHIVED — superseded architecture**
+> **ARCHIVED — doubly-superseded architecture**
 >
-> This document describes an intermediate design where each dockyard instance
-> ran its own bundled sysbox daemon (`${PREFIX}sysbox.service`). That approach
-> was abandoned because sysbox 0.6.7 CE has hardcoded socket paths
+> This document describes the first intermediate design where each dockyard
+> instance ran its own bundled sysbox daemon (`${PREFIX}sysbox.service`). That
+> approach was abandoned because sysbox 0.6.7 CE has hardcoded socket paths
 > (`/run/sysbox/sysfs.sock`, `/run/sysbox/sysmgr.sock`) — only one sysbox
 > daemon can run per host.
 >
-> The current architecture uses a **single shared `dockyard-sysbox.service`**
-> per host. See [FINDINGS.md](FINDINGS.md) for the root-cause analysis and
-> [PROGRESS.md](PROGRESS.md) for the new architecture.
+> A second intermediate design used a **single shared `dockyard-sysbox.service`**
+> per host (`Requires=` from each docker service). That too has been superseded.
+>
+> **Current architecture (2026-02-24)**: Per-instance sysbox using the
+> `github.com/thieso2/sysbox` fork (version `0.6.7.2-tc`), which adds
+> `--run-dir` to `sysbox-mgr`/`sysbox-fs` and `SYSBOX_RUN_DIR` env var support
+> in `sysbox-runc`. Each instance runs its own isolated sysbox pair. There is no
+> shared sysbox service and no ref-counting.
+>
+> See [ARCHITECTURE.md](ARCHITECTURE.md) for the current design and
+> [FINDINGS.md](FINDINGS.md) for the full root-cause analysis.
 
 ---
 

@@ -4,6 +4,7 @@
 
 **Date**: 2026-02-23
 **Severity**: Architectural blocker for naive per-instance sysbox
+**Status**: RESOLVED — forked sysbox (0.6.7.2-tc)
 
 `sysbox-fs` and `sysbox-mgr` have NO flag to change their socket paths:
 - `/run/sysbox/sysfs.sock` — hardcoded in sysbox-fs
@@ -19,17 +20,51 @@ Multiple dockyard instances **cannot** each run their own isolated sysbox daemon
 
 When the **first** instance (which successfully bound the socket) is destroyed, the socket disappears and all other instances immediately lose sysbox → DinD breaks.
 
-### Solution: Shared sysbox daemon with ref-counting
+### Intermediate solution (superseded): Shared sysbox daemon with ref-counting
 
-Sysbox must be treated as a **host-level shared daemon** (like the Linux kernel itself). All dockyard instances use the same `/run/sysbox/sysfs.sock`. Container-level isolation (UID namespaces, proc emulation) is still fully per-container — sysbox was designed for multi-tenant use.
+An intermediate architecture used a single shared `dockyard-sysbox.service` per host (`Requires=` from each docker service). This was workable but meant all instances shared one sysbox process — no true per-instance isolation of the runtime daemon.
 
-**Architecture**:
-- `dockyard-sysbox.service` — one per host, not per instance
-- Shared binary: `/usr/local/lib/dockyard/sysbox-{fs,mgr}` (copied on first create; sysbox-runc stays per-instance in `${BIN_DIR}/`)
-- Shared data: `/var/lib/dockyard-sysbox/`
-- Ref-count file: `/run/sysbox/dockyard-refcount` (direct/non-systemd mode)
-- First dockyard instance starts sysbox; last one stops it
-- Per-instance `${PREFIX}docker.service` `Requires=dockyard-sysbox.service`
+### Final solution: Fork sysbox to add `--run-dir`
+
+The fork (`github.com/thieso2/sysbox`, version `0.6.7.2-tc`) adds:
+- `--run-dir <dir>` flag to `sysbox-mgr` and `sysbox-fs` — configures the socket/pid directory
+- `SYSBOX_RUN_DIR` environment variable support in `sysbox-runc`
+
+Each dockyard instance now starts its own sysbox-mgr and sysbox-fs with a unique `--run-dir` pointing to `${DOCKYARD_ROOT}/sysbox-run/`. There is no shared sysbox service.
+
+---
+
+## sysbox-runc has no --run-dir flag; reads SYSBOX_RUN_DIR env var instead
+
+**Date**: 2026-02-24
+**Severity**: Integration blocker for per-instance sysbox-runc
+
+`sysbox-runc` does not accept `--run-dir` as a CLI flag. Passing it via `runtimeArgs` in daemon.json causes exit status 1 at container start time.
+
+**Root cause**: sysbox-runc reads its socket paths from the environment variable `SYSBOX_RUN_DIR`, not from a CLI argument. The variable is consumed in `libsysbox/sysbox/sysbox.go` `init()`, which calls `SetSockAddr()` on both the sysbox-mgr and sysbox-fs gRPC clients.
+
+**Fix**: Install the real sysbox-runc binary as `sysbox-runc-bin`. Install a thin wrapper script at `sysbox-runc` that sets `SYSBOX_RUN_DIR` before exec-ing the real binary:
+
+```sh
+#!/bin/sh
+export SYSBOX_RUN_DIR="/dy1/sysbox-run"
+exec "/dy1/docker-runtime/bin/sysbox-runc-bin" "$@"
+```
+
+daemon.json's `runtimes` block points to the wrapper with no `runtimeArgs`.
+
+---
+
+## build.sh grep -v '#!' stripped heredoc shebangs
+
+**Date**: 2026-02-24
+**Severity**: Build correctness bug — wrapper script shebangs silently removed
+
+`build.sh` used `grep -v '^#!'` to strip the per-file shebang line before concatenating source files. This also stripped any `#!/bin/sh` line that appeared inside a heredoc in a source file (specifically the sysbox-runc wrapper script heredoc in `src/11_create.sh`).
+
+**Symptom**: The installed `sysbox-runc` wrapper lacked its `#!/bin/sh` shebang and failed to execute.
+
+**Fix**: Replace `grep -v '^#!'` with `awk 'NR==1 && /^#!/ {next} {print}'`, which skips only the first line of each source file when it is a shebang, leaving all subsequent lines intact regardless of their content.
 
 ---
 

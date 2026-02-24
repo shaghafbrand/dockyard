@@ -87,29 +87,34 @@ The installer downloads static binaries (cached in `.tmp/` for repeated installs
 |----------|---------|----------|
 | [Docker CE](https://download.docker.com/linux/static/stable/x86_64/) | 29.2.1 | dockerd, containerd, docker, ctr, runc, etc. |
 | [Docker Rootless Extras](https://download.docker.com/linux/static/stable/x86_64/) | 29.2.1 | dockerd-rootless, vpnkit, rootlesskit, etc. |
-| [Sysbox CE](https://github.com/nestybox/sysbox) | 0.6.7 | sysbox-runc (per-instance), sysbox-mgr + sysbox-fs (shared host daemon) |
+| [Sysbox fork](https://github.com/thieso2/sysbox) | 0.6.7.2-tc | sysbox-mgr, sysbox-fs, sysbox-runc-bin (all per-instance) |
+
+All three sysbox binaries are per-instance. There is no shared sysbox host daemon.
 
 ```
 ${DOCKYARD_ROOT}/                       # owned by ${PREFIX}docker user/group
 ├── docker.sock                         # Docker API socket (root:${PREFIX}docker 660)
 ├── docker/                             # Images, containers, volumes
 │   └── containerd/
+├── sysbox-run/                         # Per-instance sysbox sockets + PID files
+│   ├── sysmgr.sock
+│   ├── sysfs.sock
+│   ├── sysbox-mgr.pid
+│   └── sysbox-fs.pid
+├── sysbox/                             # sysbox-mgr data-root + sysbox-fs mountpoint
 └── docker-runtime/
-    ├── bin/                            # dockerd, containerd, sysbox-runc, dockyardctl, docker wrapper
+    ├── bin/                            # dockerd, containerd, sysbox-mgr, sysbox-fs,
+    │                                   # sysbox-runc (wrapper), sysbox-runc-bin (binary),
+    │                                   # docker-cli, docker (wrapper), dockyardctl
     ├── etc/
     │   ├── daemon.json                 # Daemon configuration
     │   └── dockyard.env                # Copy of config (written by create)
-    ├── log/                            # containerd.log, dockerd.log
+    ├── log/                            # containerd.log, dockerd.log, sysbox-mgr.log, sysbox-fs.log
     └── run/                            # PID files
 
-/etc/systemd/system/${PREFIX}docker.service   # Per-instance docker unit
-/etc/systemd/system/dockyard-sysbox.service   # Shared sysbox unit (one per host)
+/etc/systemd/system/${PREFIX}docker.service   # Per-instance docker unit (no shared sysbox unit)
 /run/${PREFIX}docker/                         # Runtime state (tmpfs)
-
-# Shared sysbox resources (first install creates, last destroy removes)
-/usr/local/lib/dockyard/sysbox-{fs,mgr}
-/var/lib/dockyard-sysbox/
-/var/log/dockyard-sysbox/
+/etc/apparmor.d/local/fusermount3             # Per-instance AppArmor block
 ```
 
 The systemd service file is generated with all paths hardcoded at create time. It has no dependency on this repository — you can delete the repo after creation and everything keeps running.
@@ -144,10 +149,16 @@ Or use `DOCKER_HOST` directly:
 export DOCKER_HOST=unix:///dockyard/docker.sock
 ```
 
+## Why Sysbox is Forked
+
+Nestybox sysbox 0.6.7 CE hardcodes its socket paths (`/run/sysbox/sysmgr.sock`, `/run/sysbox/sysfs.sock`) with no flag to change them. Only one sysbox-mgr + sysbox-fs pair can run per host, which conflicts with the goal of fully independent per-instance isolation.
+
+The fork (`github.com/thieso2/sysbox`, version `0.6.7.2-tc`) adds a `--run-dir <dir>` flag to `sysbox-mgr` and `sysbox-fs`, and a `SYSBOX_RUN_DIR` environment variable to `sysbox-runc`. Each dockyard instance points its sysbox pair at `${DOCKYARD_ROOT}/sysbox-run/`, giving N fully isolated sysbox instances on the same host.
+
 ## Prerequisites
 
 - Linux with systemd (Ubuntu 20.04+ recommended)
-- `curl`, `tar`, `dpkg-deb` for binary downloads
+- `curl` and `tar` for binary downloads
 - Root access for installation
 
 Dockyard downloads and manages sysbox itself — no system-wide sysbox installation required.
@@ -167,7 +178,7 @@ This stops the daemon, disables the systemd service, and removes all data includ
 
 | Project | What it does | How it differs |
 |---------|-------------|----------------|
-| [Sysbox](https://github.com/nestybox/sysbox) | OCI runtime enabling rootless system workloads (Docker-in-Docker, systemd) inside containers | The runtime Dockyard uses — but doesn't manage multiple daemons or networks |
+| [Sysbox (upstream)](https://github.com/nestybox/sysbox) | OCI runtime enabling rootless system workloads (Docker-in-Docker, systemd) inside containers | Dockyard uses a fork (`github.com/thieso2/sysbox`) that adds `--run-dir` for per-instance isolation |
 | [multidocker](https://github.com/AkihiroSuda/multidocker) | Run multiple Docker daemons for testing different versions | Closest overlap — but test-oriented, no iptables isolation or systemd integration |
 | [Kata Containers](https://github.com/kata-containers/kata-containers) | Lightweight VMs via KVM that look like containers | VM-level isolation per container, heavier overhead, different trust model |
 | [gVisor](https://github.com/google/gvisor) | User-space application kernel intercepting syscalls (`runsc`) | Sandboxes individual containers, doesn't address multi-daemon orchestration |
