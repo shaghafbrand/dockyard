@@ -398,8 +398,11 @@ cmd_create() {
     #   Minimum 29.x required for the DinD ownership watcher (commit 2deac51).
     #
     # SYSBOX_VERSION: 0.6.7.2-tc is a patched fork (github.com/thieso2/sysbox)
-    #   that adds --run-dir to sysbox-mgr, sysbox-fs, and sysbox-runc, allowing
-    #   N independent sysbox instances per host (each with its own socket dir).
+    #   that adds --run-dir to sysbox-mgr and sysbox-fs, and reads SYSBOX_RUN_DIR
+    #   env var in sysbox-runc (libsysbox init()), allowing N independent sysbox
+    #   instances per host (each with its own socket dir).
+    #   sysbox-runc is installed as a thin wrapper script that sets SYSBOX_RUN_DIR
+    #   before exec'ing the real binary (sysbox-runc-bin).
     #   Distributed as a static tarball (no .deb, no dpkg dependency).
     local DOCKER_VERSION="29.2.1"
     local DOCKER_ROOTLESS_VERSION="29.2.1"
@@ -486,7 +489,10 @@ cmd_create() {
     local SYSBOX_EXTRACT="${CACHE_DIR}/sysbox-static-${SYSBOX_VERSION}"
     mkdir -p "$SYSBOX_EXTRACT"
     tar -xzf "${CACHE_DIR}/${SYSBOX_TARBALL}" -C "$SYSBOX_EXTRACT"
-    # All three binaries go to the per-instance BIN_DIR
+    # sysbox-mgr and sysbox-fs go directly to BIN_DIR.
+    # sysbox-runc is installed as sysbox-runc-bin; a wrapper script at
+    # sysbox-runc sets SYSBOX_RUN_DIR so the binary's init() connects to
+    # this instance's per-instance sysbox-mgr/sysbox-fs sockets.
     for bin in sysbox-runc sysbox-mgr sysbox-fs; do
         local src
         src=$(find "$SYSBOX_EXTRACT" -name "$bin" -type f | head -1)
@@ -494,9 +500,22 @@ cmd_create() {
             echo "Error: $bin not found in ${SYSBOX_TARBALL}" >&2
             exit 1
         fi
-        cp -f "$src" "$BIN_DIR/$bin"
-        chmod +x "$BIN_DIR/$bin"
+        if [ "$bin" = "sysbox-runc" ]; then
+            cp -f "$src" "${BIN_DIR}/sysbox-runc-bin"
+            chmod +x "${BIN_DIR}/sysbox-runc-bin"
+        else
+            cp -f "$src" "$BIN_DIR/$bin"
+            chmod +x "$BIN_DIR/$bin"
+        fi
     done
+    # Wrapper: sets SYSBOX_RUN_DIR so sysbox-runc-bin finds the per-instance
+    # sysbox sockets without needing a CLI flag.
+    cat > "${BIN_DIR}/sysbox-runc" <<SYSBOXWRAPEOF
+#!/bin/sh
+export SYSBOX_RUN_DIR="${SYSBOX_RUN_DIR}"
+exec "${BIN_DIR}/sysbox-runc-bin" "\$@"
+SYSBOXWRAPEOF
+    chmod +x "${BIN_DIR}/sysbox-runc"
 
     mkdir -p "${RUNTIME_DIR}/lib/docker"
 
@@ -505,6 +524,7 @@ cmd_create() {
     # Rename docker CLI binary, replace with DOCKER_HOST wrapper
     mv -f "${BIN_DIR}/docker" "${BIN_DIR}/docker-cli"
     cat > "${BIN_DIR}/docker" <<DOCKEREOF
+#!/bin/bash
 export DOCKER_HOST="unix://${DOCKER_SOCKET}"
 export DOCKER_CONFIG="${RUNTIME_DIR}/lib/docker"
 exec "\$(dirname "\$0")/docker-cli" "\$@"
@@ -514,15 +534,14 @@ DOCKEREOF
     echo "Installed binaries to ${BIN_DIR}/"
 
     # Write daemon.json (embedded — no external file dependency)
-    # runtimeArgs passes --run-dir so sysbox-runc connects to the per-instance
-    # sysbox-mgr and sysbox-fs sockets in SYSBOX_RUN_DIR.
+    # sysbox-runc is a wrapper script that sets SYSBOX_RUN_DIR before exec'ing
+    # the real binary; no runtimeArgs needed.
     cat > "${ETC_DIR}/daemon.json" <<DAEMONJSONEOF
 {
   "default-runtime": "sysbox-runc",
   "runtimes": {
     "sysbox-runc": {
-      "path": "${BIN_DIR}/sysbox-runc",
-      "runtimeArgs": ["--run-dir", "${SYSBOX_RUN_DIR}"]
+      "path": "${BIN_DIR}/sysbox-runc"
     }
   },
   "storage-driver": "overlay2",

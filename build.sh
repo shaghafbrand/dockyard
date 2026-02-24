@@ -6,8 +6,8 @@ mkdir -p dist
 cat src/00_header.sh > "$OUT"
 for f in $(ls src/[0-9]*.sh | sort); do
     [ "$f" = "src/00_header.sh" ] && continue
-    # Strip shebang lines from non-header files
-    grep -v '^#!' "$f" >> "$OUT"
+    # Strip shebang from first line only (not from heredoc content)
+    awk 'NR==1 && /^#!/ {next} {print}' "$f" >> "$OUT"
     printf '\n' >> "$OUT"
 done
 chmod +x "$OUT"
