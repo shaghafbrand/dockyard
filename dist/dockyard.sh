@@ -662,6 +662,7 @@ StartLimitIntervalSec=60
 [Service]
 Type=forking
 PIDFile=${RUN_DIR}/dockerd.pid
+Environment=PATH=${BIN_DIR}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 
 # Create runtime and sysbox directories
 ExecStartPre=/bin/mkdir -p ${LOG_DIR} ${RUN_DIR}/containerd ${SYSBOX_RUN_DIR} ${DOCKER_DATA}/containerd ${SYSBOX_DATA_DIR}
