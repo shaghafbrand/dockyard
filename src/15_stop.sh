@@ -2,7 +2,7 @@ cmd_stop() {
     require_root
 
     # Reverse startup order: dockerd -> containerd -> sysbox
-    stop_daemon dockerd "${EXEC_ROOT}/dockerd.pid" 20
+    stop_daemon dockerd "${RUN_DIR}/dockerd.pid" 20
     stop_daemon containerd "${RUN_DIR}/containerd.pid" 10
     stop_daemon sysbox-fs "${SYSBOX_RUN_DIR}/sysbox-fs.pid" 10
     stop_daemon sysbox-mgr "${SYSBOX_RUN_DIR}/sysbox-mgr.pid" 10

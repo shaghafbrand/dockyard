@@ -21,9 +21,8 @@ cmd_create() {
     echo "  DOCKYARD_POOL_SIZE:     ${DOCKYARD_POOL_SIZE}"
     echo ""
     echo "  bridge:      ${BRIDGE}"
-    echo "  exec-root:   ${EXEC_ROOT}"
     echo "  service:     ${SERVICE_NAME}.service"
-    echo "  runtime:     ${RUNTIME_DIR}"
+    echo "  root:        ${DOCKYARD_ROOT}"
     echo "  data:        ${DOCKER_DATA}"
     echo "  socket:      ${DOCKER_SOCKET}"
     echo "  user:        ${INSTANCE_USER}"
@@ -67,7 +66,8 @@ cmd_create() {
     local SYSBOX_URL="https://github.com/thieso2/sysbox/releases/download/v${SYSBOX_VERSION}/${SYSBOX_TARBALL}"
 
     mkdir -p "$LOG_DIR" "$RUN_DIR" "$ETC_DIR" "$BIN_DIR"
-    mkdir -p "$DOCKER_DATA"
+    mkdir -p "$DOCKER_DATA" "$DOCKER_CONFIG_DIR"
+    mkdir -p "${RUN_DIR}/containerd"
     mkdir -p "$CACHE_DIR"
     mkdir -p "$SYSBOX_RUN_DIR"
     mkdir -p "$SYSBOX_DATA_DIR"
@@ -163,8 +163,6 @@ cmd_create() {
         chmod +x "$BIN_DIR/$bin"
     done
 
-    mkdir -p "${RUNTIME_DIR}/lib/docker"
-
     chmod +x "$BIN_DIR"/*
 
     # Rename docker CLI binary, replace with DOCKER_HOST wrapper
@@ -172,7 +170,7 @@ cmd_create() {
     cat > "${BIN_DIR}/docker" <<DOCKEREOF
 #!/bin/bash
 export DOCKER_HOST="unix://${DOCKER_SOCKET}"
-export DOCKER_CONFIG="${RUNTIME_DIR}/lib/docker"
+export DOCKER_CONFIG="${DOCKER_CONFIG_DIR}"
 exec "\$(dirname "\$0")/docker-cli" "\$@"
 DOCKEREOF
     chmod +x "${BIN_DIR}/docker"

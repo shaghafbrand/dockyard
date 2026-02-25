@@ -18,7 +18,7 @@ All commands except gen-env require a config file:
   1. $DOCKYARD_ENV (if set)
   2. ./dockyard.env (in current directory)
   3. ../etc/dockyard.env (relative to script — for installed copy)
-  4. $DOCKYARD_ROOT/docker-runtime/etc/dockyard.env
+  4. $DOCKYARD_ROOT/etc/dockyard.env
 
 Examples:
   ./dockyard.sh gen-env

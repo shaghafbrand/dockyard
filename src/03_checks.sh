@@ -3,17 +3,11 @@
 check_prefix_conflict() {
     local prefix="${1:-$DOCKYARD_DOCKER_PREFIX}"
     local bridge="${prefix}docker0"
-    local exec_root="/run/${prefix}docker"
     local docker_service="${prefix}docker.service"
     local sysbox_service="${prefix}sysbox.service"
 
     if ip link show "$bridge" &>/dev/null; then
         echo "Error: Bridge ${bridge} already exists — DOCKYARD_DOCKER_PREFIX=${prefix} is in use." >&2
-        echo "Use: DOCKYARD_DOCKER_PREFIX=myprefix_ ./dockyard.sh gen-env" >&2
-        return 1
-    fi
-    if [ -d "$exec_root" ]; then
-        echo "Error: ${exec_root} already exists — DOCKYARD_DOCKER_PREFIX=${prefix} is in use." >&2
         echo "Use: DOCKYARD_DOCKER_PREFIX=myprefix_ ./dockyard.sh gen-env" >&2
         return 1
     fi
@@ -32,8 +26,8 @@ check_prefix_conflict() {
 
 check_root_conflict() {
     local root="${1:-$DOCKYARD_ROOT}"
-    if [ -d "${root}/docker-runtime/bin" ]; then
-        echo "Error: ${root}/docker-runtime/bin/ already exists — dockyard is already installed at this root." >&2
+    if [ -d "${root}/bin" ]; then
+        echo "Error: ${root}/bin/ already exists — dockyard is already installed at this root." >&2
         echo "Use: DOCKYARD_ROOT=/other/path ./dockyard.sh gen-env" >&2
         return 1
     fi

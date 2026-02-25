@@ -6,7 +6,7 @@ LOADED_ENV_FILE=""
 # Exits immediately if DOCKYARD_ENV is set but the file is missing.
 try_load_env() {
     local script_env="${SCRIPT_DIR}/../etc/dockyard.env"
-    local root_env="${DOCKYARD_ROOT:-/dockyard}/docker-runtime/etc/dockyard.env"
+    local root_env="${DOCKYARD_ROOT:-/dockyard}/etc/dockyard.env"
 
     if [ -n "${DOCKYARD_ENV:-}" ]; then
         if [ ! -f "$DOCKYARD_ENV" ]; then
@@ -44,23 +44,22 @@ derive_vars() {
     DOCKYARD_POOL_BASE="${DOCKYARD_POOL_BASE:-172.31.0.0/16}"
     DOCKYARD_POOL_SIZE="${DOCKYARD_POOL_SIZE:-24}"
 
-    RUNTIME_DIR="${DOCKYARD_ROOT}/docker-runtime"
-    BIN_DIR="${RUNTIME_DIR}/bin"
-    ETC_DIR="${RUNTIME_DIR}/etc"
-    LOG_DIR="${RUNTIME_DIR}/log"
-    RUN_DIR="${RUNTIME_DIR}/run"
+    BIN_DIR="${DOCKYARD_ROOT}/bin"
+    ETC_DIR="${DOCKYARD_ROOT}/etc"
+    LOG_DIR="${DOCKYARD_ROOT}/log"
+    RUN_DIR="${DOCKYARD_ROOT}/run"
     BRIDGE="${DOCKYARD_DOCKER_PREFIX}docker0"
-    EXEC_ROOT="/run/${DOCKYARD_DOCKER_PREFIX}docker"
     SERVICE_NAME="${DOCKYARD_DOCKER_PREFIX}docker"
-    DOCKER_SOCKET="${DOCKYARD_ROOT}/docker.sock"
-    CONTAINERD_SOCKET="${EXEC_ROOT}/containerd/containerd.sock"
-    DOCKER_DATA="${DOCKYARD_ROOT}/docker"
+    DOCKER_SOCKET="${DOCKYARD_ROOT}/run/docker.sock"
+    CONTAINERD_SOCKET="${DOCKYARD_ROOT}/run/containerd/containerd.sock"
+    DOCKER_DATA="${DOCKYARD_ROOT}/lib/docker"
+    DOCKER_CONFIG_DIR="${DOCKYARD_ROOT}/lib/docker-config"
 
     # Per-instance system user and group (socket ownership + access control)
     INSTANCE_USER="${DOCKYARD_DOCKER_PREFIX}docker"
     INSTANCE_GROUP="${DOCKYARD_DOCKER_PREFIX}docker"
 
     # Per-instance sysbox daemons (separate sysbox-mgr + sysbox-fs per installation)
-    SYSBOX_RUN_DIR="${DOCKYARD_ROOT}/sysbox-run"
-    SYSBOX_DATA_DIR="${DOCKYARD_ROOT}/sysbox"
+    SYSBOX_RUN_DIR="${DOCKYARD_ROOT}/run/sysbox"
+    SYSBOX_DATA_DIR="${DOCKYARD_ROOT}/lib/sysbox"
 }

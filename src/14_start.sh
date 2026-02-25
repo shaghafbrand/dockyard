@@ -3,11 +3,11 @@ cmd_start() {
 
     export PATH="${BIN_DIR}:${PATH}"
 
-    mkdir -p "$LOG_DIR" "$RUN_DIR" "${EXEC_ROOT}/containerd" "$DOCKER_DATA/containerd"
+    mkdir -p "$LOG_DIR" "$RUN_DIR" "${RUN_DIR}/containerd" "$DOCKER_DATA/containerd"
 
     # Clean up stale sockets/pids from previous runs
     rm -f "$CONTAINERD_SOCKET" "$DOCKER_SOCKET"
-    for pidfile in "${RUN_DIR}/containerd.pid" "${EXEC_ROOT}/dockerd.pid"; do
+    for pidfile in "${RUN_DIR}/containerd.pid" "${RUN_DIR}/dockerd.pid"; do
         if [ -f "$pidfile" ]; then
             local pid
             pid=$(cat "$pidfile")
@@ -86,7 +86,7 @@ cmd_start() {
     echo "Starting containerd..."
     "${BIN_DIR}/containerd" \
         --root "$DOCKER_DATA/containerd" \
-        --state "${EXEC_ROOT}/containerd" \
+        --state "${RUN_DIR}/containerd" \
         --address "$CONTAINERD_SOCKET" \
         &>"${LOG_DIR}/containerd.log" &
     CONTAINERD_PID=$!
@@ -102,8 +102,8 @@ cmd_start() {
         --config-file "${ETC_DIR}/daemon.json" \
         --containerd "$CONTAINERD_SOCKET" \
         --data-root "$DOCKER_DATA" \
-        --exec-root "$EXEC_ROOT" \
-        --pidfile "${EXEC_ROOT}/dockerd.pid" \
+        --exec-root "$RUN_DIR" \
+        --pidfile "${RUN_DIR}/dockerd.pid" \
         --bridge "$BRIDGE" \
         --fixed-cidr "$DOCKYARD_FIXED_CIDR" \
         --default-address-pool "base=${DOCKYARD_POOL_BASE},size=${DOCKYARD_POOL_SIZE}" \

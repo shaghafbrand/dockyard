@@ -32,13 +32,13 @@ type Instance struct {
 	Prefix  string // "dy1_"
 	Root    string // "/dy1"
 	EnvFile string // "~/dy1.env"
-	Socket  string // "/dy1/docker.sock"
+	Socket  string // "/dy1/run/docker.sock"
 }
 
 var allInstances = []Instance{
-	{"A", "dy1_", "/dy1", "~/dy1.env", "/dy1/docker.sock"},
-	{"B", "dy2_", "/dy2", "~/dy2.env", "/dy2/docker.sock"},
-	{"C", "dy3_", "/dy3", "~/dy3.env", "/dy3/docker.sock"},
+	{"A", "dy1_", "/dy1", "~/dy1.env", "/dy1/run/docker.sock"},
+	{"B", "dy2_", "/dy2", "~/dy2.env", "/dy2/run/docker.sock"},
+	{"C", "dy3_", "/dy3", "~/dy3.env", "/dy3/run/docker.sock"},
 }
 
 // ── SSH helpers ───────────────────────────────────────────────────────────────
@@ -236,8 +236,7 @@ func cleanupAllInstances(client *ssh.Client) {
 			"[ -f %s ] && DOCKYARD_ENV=%s sudo -E ~/dockyard.sh destroy --yes 2>/dev/null; true",
 			inst.EnvFile, inst.EnvFile,
 		))
-		run(client, fmt.Sprintf("sudo rm -rf /run/%sdocker 2>/dev/null; true", inst.Prefix))
-		run(client, fmt.Sprintf("sudo rm -rf %s/sysbox-run 2>/dev/null; true", inst.Root))
+		run(client, fmt.Sprintf("sudo rm -rf /run/%sdocker 2>/dev/null; true", inst.Prefix)) // legacy cleanup
 		run(client, fmt.Sprintf("sudo rm -rf %s 2>/dev/null; true", inst.Root))
 		run(client, fmt.Sprintf("sudo ip link delete %sdocker0 2>/dev/null; true", inst.Prefix))
 		run(client, fmt.Sprintf(
@@ -247,6 +246,12 @@ func cleanupAllInstances(client *ssh.Client) {
 		run(client, fmt.Sprintf("sudo rm -f /etc/systemd/system/%sdocker.service 2>/dev/null; true", inst.Prefix))
 		run(client, fmt.Sprintf("rm -f %s 2>/dev/null; true", inst.EnvFile))
 	}
+	// Clean up nested-root test instance (test 28)
+	run(client, "[ -f ~/dyn.env ] && DOCKYARD_ENV=~/dyn.env sudo -E ~/dockyard.sh destroy --yes 2>/dev/null; true")
+	run(client, "sudo rm -rf /tmp/dockyard-nested 2>/dev/null; true")
+	run(client, "sudo systemctl stop dyn_docker 2>/dev/null; sudo systemctl disable dyn_docker 2>/dev/null; true")
+	run(client, "sudo rm -f /etc/systemd/system/dyn_docker.service 2>/dev/null; true")
+	run(client, "rm -f ~/dyn.env 2>/dev/null; true")
 	run(client, "sudo systemctl daemon-reload 2>/dev/null; true")
 }
 
@@ -836,10 +841,10 @@ func runTests(client *ssh.Client, host, user, keyPath string) {
 			if strings.TrimSpace(out) == "exists" {
 				cleanFails = append(cleanFails, inst.Label+": "+inst.Root+" still exists")
 			}
-			// per-instance sysbox run dir gone (inside instance root)
-			out, _, _ = run(client, fmt.Sprintf("[ -d %s/sysbox-run ] && echo exists || echo gone", inst.Root))
+			// per-instance sysbox run dir gone (run/sysbox inside instance root)
+			out, _, _ = run(client, fmt.Sprintf("[ -d %s/run/sysbox ] && echo exists || echo gone", inst.Root))
 			if strings.TrimSpace(out) == "exists" {
-				cleanFails = append(cleanFails, inst.Label+": "+inst.Root+"/sysbox-run still exists")
+				cleanFails = append(cleanFails, inst.Label+": "+inst.Root+"/run/sysbox still exists")
 			}
 		}
 		// instance users and groups removed
@@ -859,6 +864,80 @@ func runTests(client *ssh.Client, host, user, keyPath string) {
 			pass(27, "full cleanup: no services, bridges, iptables, data dirs, or users", d)
 		} else {
 			fail(27, "full cleanup", strings.Join(cleanFails, " | "), d)
+		}
+	}
+
+	//
+	// ── Phase 12: Nested DOCKYARD_ROOT lifecycle ──────────────────────────────
+	//
+
+	// 28 — deeply nested DOCKYARD_ROOT: gen-env → create → container run → destroy
+	// Verifies the FHS layout works when DOCKYARD_ROOT is several levels deep.
+	{
+		start := time.Now()
+		nestedRoot := "/tmp/dockyard-nested/level1/level2/dockyard"
+		nestedPrefix := "dyn_"
+		nestedEnv := "~/dyn.env"
+		nestedSocket := nestedRoot + "/run/docker.sock"
+
+		// Pre-cleanup in case a previous run left state
+		run(client, fmt.Sprintf("DOCKYARD_ENV=%s sudo -E ~/dockyard.sh destroy --yes 2>/dev/null; true", nestedEnv))
+		run(client, fmt.Sprintf("sudo rm -rf /tmp/dockyard-nested 2>/dev/null; true"))
+		run(client, fmt.Sprintf("rm -f %s 2>/dev/null; true", nestedEnv))
+		run(client, fmt.Sprintf("sudo systemctl stop %sdocker 2>/dev/null; sudo systemctl disable %sdocker 2>/dev/null; true", nestedPrefix, nestedPrefix))
+		run(client, fmt.Sprintf("sudo rm -f /etc/systemd/system/%sdocker.service 2>/dev/null; true", nestedPrefix))
+		run(client, "sudo systemctl daemon-reload 2>/dev/null; true")
+
+		nestedOK := true
+		var nestedMsg string
+
+		_, se, code := run(client, fmt.Sprintf(
+			"DOCKYARD_ENV=%s DOCKYARD_ROOT=%s DOCKYARD_DOCKER_PREFIX=%s ~/dockyard.sh gen-env",
+			nestedEnv, nestedRoot, nestedPrefix,
+		))
+		if code != 0 {
+			nestedOK, nestedMsg = false, "gen-env: "+se
+		}
+
+		if nestedOK {
+			_, se, code = run(client, fmt.Sprintf("DOCKYARD_ENV=%s sudo -E ~/dockyard.sh create", nestedEnv))
+			if code != 0 {
+				nestedOK, nestedMsg = false, "create: "+se
+			}
+		}
+
+		if nestedOK {
+			out, se, code := run(client, fmt.Sprintf(
+				"sudo DOCKER_HOST=unix://%s docker run --rm alpine echo nested-ok",
+				nestedSocket,
+			))
+			if code != 0 || !strings.Contains(out, "nested-ok") {
+				nestedOK, nestedMsg = false, "container run: "+se
+			}
+		}
+
+		if nestedOK {
+			_, se, code = run(client, fmt.Sprintf("DOCKYARD_ENV=%s sudo -E ~/dockyard.sh destroy --yes", nestedEnv))
+			if code != 0 {
+				nestedOK, nestedMsg = false, "destroy: "+se
+			} else {
+				out, _, _ := run(client, fmt.Sprintf("[ -d %s ] && echo exists || echo gone", nestedRoot))
+				if strings.TrimSpace(out) == "exists" {
+					nestedOK, nestedMsg = false, nestedRoot+" still exists after destroy"
+				}
+			}
+		}
+
+		// Always clean up, even on failure
+		run(client, fmt.Sprintf("DOCKYARD_ENV=%s sudo -E ~/dockyard.sh destroy --yes 2>/dev/null; true", nestedEnv))
+		run(client, "sudo rm -rf /tmp/dockyard-nested 2>/dev/null; true")
+		run(client, fmt.Sprintf("rm -f %s 2>/dev/null; true", nestedEnv))
+
+		d := time.Since(start)
+		if nestedOK {
+			pass(28, "nested DOCKYARD_ROOT lifecycle (gen-env + create + container run + destroy)", d)
+		} else {
+			fail(28, "nested DOCKYARD_ROOT lifecycle", nestedMsg, d)
 		}
 	}
 }
@@ -942,7 +1021,7 @@ func main() {
 	runTests(client, *hostFlag, *userFlag, kp)
 	totalElapsed := time.Since(suiteStart)
 
-	total := 27 // total expected tests
+	total := 28 // total expected tests
 	passed := 0
 	for _, r := range results {
 		if r.Passed {

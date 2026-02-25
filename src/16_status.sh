@@ -12,9 +12,7 @@ cmd_status() {
     echo ""
 
     echo "Derived:"
-    echo "  RUNTIME_DIR=${RUNTIME_DIR}"
     echo "  RUN_DIR=${RUN_DIR}"
-    echo "  EXEC_ROOT=${EXEC_ROOT}"
     echo "  BRIDGE=${BRIDGE}"
     echo "  SERVICE_NAME=${SERVICE_NAME}"
     echo "  DOCKER_SOCKET=${DOCKER_SOCKET}"
@@ -50,7 +48,7 @@ cmd_status() {
     check_pid "sysbox-mgr" "${SYSBOX_RUN_DIR}/sysbox-mgr.pid"
     check_pid "sysbox-fs " "${SYSBOX_RUN_DIR}/sysbox-fs.pid"
     check_pid "containerd" "${RUN_DIR}/containerd.pid"
-    check_pid "dockerd   " "${EXEC_ROOT}/dockerd.pid"
+    check_pid "dockerd   " "${RUN_DIR}/dockerd.pid"
 
     # --- bridge ---
     if ip link show "$BRIDGE" &>/dev/null; then
@@ -87,8 +85,7 @@ cmd_status() {
     # --- paths ---
     echo ""
     echo "Paths:"
-    echo "  runtime:  ${RUNTIME_DIR}"
+    echo "  root:     ${DOCKYARD_ROOT}"
     echo "  data:     ${DOCKER_DATA}"
-    echo "  exec:     ${EXEC_ROOT}"
     echo "  logs:     ${LOG_DIR}"
 }

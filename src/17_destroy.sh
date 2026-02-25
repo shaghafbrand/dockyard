@@ -12,12 +12,8 @@ cmd_destroy() {
     local SERVICE_FILE="/etc/systemd/system/${SERVICE_NAME}.service"
 
     echo "This will remove all installed dockyard docker files:"
-    echo "  ${SERVICE_FILE}              (docker systemd service)"
-    echo "  ${RUNTIME_DIR}/    (binaries, config, logs, pids)"
-    echo "  ${DOCKER_DATA}/            (images, containers, volumes)"
-    echo "  ${SYSBOX_DATA_DIR}/        (sysbox data)"
-    echo "  ${DOCKER_SOCKET}        (socket)"
-    echo "  ${EXEC_ROOT}/                         (runtime state)"
+    echo "  ${SERVICE_FILE}    (docker systemd service)"
+    echo "  ${DOCKYARD_ROOT}/  (all instance data: binaries, config, data, logs, sockets)"
     echo ""
     if [[ "$YES" != true ]]; then
         read -p "Continue? [y/N] " confirm
@@ -32,7 +28,7 @@ cmd_destroy() {
         cmd_disable
     else
         # No systemd service — stop daemons directly
-        for pidfile in "${EXEC_ROOT}/dockerd.pid" "${RUN_DIR}/containerd.pid"; do
+        for pidfile in "${RUN_DIR}/dockerd.pid" "${RUN_DIR}/containerd.pid"; do
             if [ -f "$pidfile" ]; then
                 local pid
                 pid=$(cat "$pidfile")
@@ -57,37 +53,7 @@ cmd_destroy() {
     # --- 1.5. Remove leftover user-defined network bridges from the pool ---
     cleanup_pool_bridges
 
-    # --- 2. Remove runtime state ---
-    if [ -d "$EXEC_ROOT" ]; then
-        rm -rf "$EXEC_ROOT"
-        echo "Removed ${EXEC_ROOT}/"
-    fi
-
-    # --- 3. Remove socket ---
-    if [ -e "$DOCKER_SOCKET" ]; then
-        rm -f "$DOCKER_SOCKET"
-        echo "Removed ${DOCKER_SOCKET}"
-    fi
-
-    # --- 4. Remove runtime binaries, config, logs, pids ---
-    if [ -d "$RUNTIME_DIR" ]; then
-        rm -rf "$RUNTIME_DIR"
-        echo "Removed ${RUNTIME_DIR}/"
-    fi
-
-    # --- 5. Remove docker data (images, containers, volumes) ---
-    if [ -d "$DOCKER_DATA" ]; then
-        rm -rf "$DOCKER_DATA"
-        echo "Removed ${DOCKER_DATA}/"
-    fi
-
-    # --- 6. Remove per-instance sysbox data ---
-    if [ -d "$SYSBOX_DATA_DIR" ]; then
-        rm -rf "$SYSBOX_DATA_DIR"
-        echo "Removed ${SYSBOX_DATA_DIR}/ (sysbox data)"
-    fi
-
-    # --- 6b. Remove AppArmor fusermount3 entry for this instance ---
+    # --- 2. Remove AppArmor fusermount3 entry for this instance ---
     local apparmor_file="/etc/apparmor.d/local/fusermount3"
     local apparmor_begin="# dockyard:${DOCKYARD_DOCKER_PREFIX}:begin"
     if grep -qF "$apparmor_begin" "$apparmor_file" 2>/dev/null; then
@@ -102,20 +68,13 @@ cmd_destroy() {
         echo "Removed AppArmor fusermount3 entry for ${DOCKYARD_DOCKER_PREFIX}"
     fi
 
-    # --- 7. Remove env file ---
-    rm -f "${ETC_DIR}/dockyard.env"
-    echo "Removed ${ETC_DIR}/dockyard.env"
-
-    # --- 8. Remove DOCKYARD_ROOT if empty ---
+    # --- 3. Remove instance root (all state: binaries, config, data, logs, sockets) ---
     if [ -d "$DOCKYARD_ROOT" ]; then
-        if rmdir "$DOCKYARD_ROOT" 2>/dev/null; then
-            echo "Removed ${DOCKYARD_ROOT}/ (was empty)"
-        else
-            echo "Note: ${DOCKYARD_ROOT}/ not empty, left in place"
-        fi
+        rm -rf "$DOCKYARD_ROOT"
+        echo "Removed ${DOCKYARD_ROOT}/"
     fi
 
-    # --- 9. Remove instance user and group ---
+    # --- 4. Remove instance user and group ---
     if getent passwd "${INSTANCE_USER}" &>/dev/null; then
         userdel "${INSTANCE_USER}" 2>/dev/null || true
         echo "Removed user ${INSTANCE_USER}"
