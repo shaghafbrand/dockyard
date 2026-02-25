@@ -242,6 +242,56 @@ check_subnet_conflict() {
     return 0
 }
 
+# Cross-check proposed CIDRs against sibling dockyard env files in the given
+# directory.  Prevents gen-env for instance B from picking a pool range that
+# shares a /16 with instance A's bridge CIDR (and vice versa), which would
+# cause a conflict when concurrent creates bring A's bridge up before B's
+# check_subnet_conflict runs.
+check_sibling_conflict() {
+    local fixed_cidr="$1"
+    local pool_base="$2"
+    local env_dir="$3"
+
+    [ -d "$env_dir" ] || return 0
+
+    local our_bridge_two our_pool_two
+    our_bridge_two="${fixed_cidr%.*.*}"     # e.g. "172.21" from 172.21.116.0/24
+    our_pool_two="${pool_base%/*}"
+    our_pool_two="${our_pool_two%.*.*}"     # e.g. "172.21" from 172.21.0.0/16
+
+    for sibling in "${env_dir}"/*.env; do
+        [ -f "$sibling" ] || continue
+        local sib_fixed sib_pool
+        sib_fixed=$(grep '^DOCKYARD_FIXED_CIDR=' "$sibling" 2>/dev/null | cut -d= -f2) || true
+        sib_pool=$(grep '^DOCKYARD_POOL_BASE=' "$sibling" 2>/dev/null | cut -d= -f2) || true
+        [ -n "${sib_fixed}${sib_pool}" ] || continue
+
+        if [ -n "$sib_fixed" ]; then
+            local sib_two="${sib_fixed%.*.*}"
+            # Our pool must not share a /16 with a sibling's bridge
+            if [ "$our_pool_two" = "$sib_two" ]; then
+                echo "Error: DOCKYARD_POOL_BASE ${pool_base} would overlap with sibling bridge ${sib_fixed} (from ${sibling})" >&2
+                return 1
+            fi
+        fi
+        if [ -n "$sib_pool" ]; then
+            local sib_pool_two="${sib_pool%/*}"
+            sib_pool_two="${sib_pool_two%.*.*}"
+            # Our bridge must not share a /16 with a sibling's pool
+            if [ "$our_bridge_two" = "$sib_pool_two" ]; then
+                echo "Error: DOCKYARD_FIXED_CIDR ${fixed_cidr} would overlap with sibling pool ${sib_pool} (from ${sibling})" >&2
+                return 1
+            fi
+            # Our pool must not share a /16 with a sibling's pool
+            if [ "$our_pool_two" = "$sib_pool_two" ]; then
+                echo "Error: DOCKYARD_POOL_BASE ${pool_base} would overlap with sibling pool ${sib_pool} (from ${sibling})" >&2
+                return 1
+            fi
+        fi
+    done
+    return 0
+}
+
 # ── Commands ─────────────────────────────────────────────────
 
 cmd_gen_env() {
@@ -295,7 +345,10 @@ cmd_gen_env() {
                 break
             fi
 
-            if check_subnet_conflict "$fixed_cidr" "$pool_base" 2>/dev/null; then
+            local env_dir
+            env_dir="$(cd "$(dirname "${out_file}")" 2>/dev/null && pwd)" || env_dir=""
+            if check_subnet_conflict "$fixed_cidr" "$pool_base" 2>/dev/null && \
+               check_sibling_conflict "$fixed_cidr" "$pool_base" "$env_dir" 2>/dev/null; then
                 break
             fi
 
@@ -395,7 +448,6 @@ cmd_create() {
     #   Uses sysbox-runc as default runtime → the bundled runc 1.3.3 is never
     #   called for sandbox containers, so this version does NOT trigger the
     #   sysbox procfs incompatibility (nestybox/sysbox#973).
-    #   Minimum 29.x required for the DinD ownership watcher (commit 2deac51).
     #
     # SYSBOX_VERSION: 0.6.7.7-tc is a patched fork (github.com/thieso2/sysbox)
     #   that adds --run-dir to sysbox-mgr, sysbox-fs, and sysbox-runc, allowing
@@ -478,16 +530,22 @@ cmd_create() {
     download "$DOCKER_ROOTLESS_URL"
     download "$SYSBOX_URL"
 
+    # Use per-PID staging dirs for extraction so concurrent creates don't race
+    # on a shared extraction directory (all instances share the same CACHE_DIR).
+    local STAGING="${CACHE_DIR}/staging-$$"
+    mkdir -p "$STAGING"
+    trap 'rm -rf "$STAGING"' RETURN
+
     echo "Extracting Docker binaries..."
-    tar -xzf "${CACHE_DIR}/docker-${DOCKER_VERSION}.tgz" -C "$CACHE_DIR"
-    cp -f "${CACHE_DIR}/docker/"* "$BIN_DIR/"
+    tar -xzf "${CACHE_DIR}/docker-${DOCKER_VERSION}.tgz" -C "$STAGING"
+    cp -f "${STAGING}/docker/"* "$BIN_DIR/"
 
     echo "Extracting Docker rootless extras..."
-    tar -xzf "${CACHE_DIR}/docker-rootless-extras-${DOCKER_ROOTLESS_VERSION}.tgz" -C "$CACHE_DIR"
-    cp -f "${CACHE_DIR}/docker-rootless-extras/"* "$BIN_DIR/"
+    tar -xzf "${CACHE_DIR}/docker-rootless-extras-${DOCKER_ROOTLESS_VERSION}.tgz" -C "$STAGING"
+    cp -f "${STAGING}/docker-rootless-extras/"* "$BIN_DIR/"
 
     echo "Extracting sysbox static binaries..."
-    local SYSBOX_EXTRACT="${CACHE_DIR}/sysbox-static-${SYSBOX_VERSION}"
+    local SYSBOX_EXTRACT="${STAGING}/sysbox-static-${SYSBOX_VERSION}"
     mkdir -p "$SYSBOX_EXTRACT"
     tar -xzf "${CACHE_DIR}/${SYSBOX_TARBALL}" -C "$SYSBOX_EXTRACT"
     # All three sysbox binaries go directly to BIN_DIR.
@@ -640,12 +698,6 @@ ExecStartPre=/bin/bash -c '${BIN_DIR}/containerd --root ${DOCKER_DATA}/container
 # Start dockerd
 ExecStart=/bin/bash -c '${BIN_DIR}/dockerd --config-file ${ETC_DIR}/daemon.json --containerd ${CONTAINERD_SOCKET} --data-root ${DOCKER_DATA} --exec-root ${EXEC_ROOT} --pidfile ${EXEC_ROOT}/dockerd.pid --bridge ${BRIDGE} --fixed-cidr ${DOCKYARD_FIXED_CIDR} --default-address-pool base=${DOCKYARD_POOL_BASE},size=${DOCKYARD_POOL_SIZE} --host unix://${DOCKER_SOCKET} --iptables=false --group ${INSTANCE_GROUP} &>${LOG_DIR}/dockerd.log & i=0; while [ ! -e ${DOCKER_SOCKET} ]; do sleep 1; i=\$((i+1)); if [ \$i -ge 30 ]; then echo "dockerd did not start within 30s" >&2; exit 1; fi; done'
 
-# Start DinD ownership watcher (fixes sysbox uid mapping for Docker 29+)
-ExecStartPost=/bin/bash -c 'SYSBOX_UID_OFFSET=\$(awk -F: '"'"'\$1=="sysbox"{print \$2;exit}'"'"' /etc/subuid 2>/dev/null || echo 231072); SYSBOX_DOCKER_DIR=${SYSBOX_DATA_DIR}/docker; mkdir -p "\$SYSBOX_DOCKER_DIR"; find "\$SYSBOX_DOCKER_DIR" -maxdepth 1 -mindepth 1 -uid 0 -exec chown "\${SYSBOX_UID_OFFSET}:\${SYSBOX_UID_OFFSET}" {} \; 2>/dev/null || true; (while true; do for d in "\$SYSBOX_DOCKER_DIR"/*/; do [ -d "\$d" ] || continue; uid=\$(stat -c "%u" "\$d" 2>/dev/null) || continue; [ "\$uid" = "0" ] && chown "\${SYSBOX_UID_OFFSET}:\${SYSBOX_UID_OFFSET}" "\$d" 2>/dev/null; done; sleep 1; done) & echo \$! > ${RUN_DIR}/dind-watcher.pid'
-
-# Kill DinD watcher on stop
-ExecStopPost=-/bin/bash -c 'kill \$(cat ${RUN_DIR}/dind-watcher.pid 2>/dev/null) 2>/dev/null || true; rm -f ${RUN_DIR}/dind-watcher.pid'
-
 # Stop containerd
 ExecStopPost=-/bin/bash -c 'if [ -f ${RUN_DIR}/containerd.pid ]; then kill \$(cat ${RUN_DIR}/containerd.pid) 2>/dev/null; rm -f ${RUN_DIR}/containerd.pid; fi'
 
@@ -773,37 +825,6 @@ cmd_start() {
     wait_for_file "${SYSBOX_RUN_DIR}/sysfs.sock" "sysbox-fs" 30 || cleanup
     echo "  sysbox-fs ready (pid ${SYSBOX_FS_PID})"
 
-    # --- 1b. DinD ownership watcher ---
-    # Sysbox creates each container's /var/lib/docker backing dir at
-    # ${SYSBOX_DATA_DIR}/docker/<id> owned by root:root.
-    # The container's uid namespace maps uid 0 → SYSBOX_UID_OFFSET, so container
-    # root can't access a root-owned directory.  Docker 29+ makes chmod on the
-    # data-root fatal, so DinD breaks on every new container.
-    # Fix: read the actual sysbox uid offset and chown each backing dir to it.
-    SYSBOX_UID_OFFSET=$(awk -F: '$1=="sysbox" {print $2; exit}' /etc/subuid 2>/dev/null || echo 231072)
-    SYSBOX_DOCKER_DIR="${SYSBOX_DATA_DIR}/docker"
-
-    # Fix any dirs left over from before this watcher existed (e.g. after reinstall).
-    find "$SYSBOX_DOCKER_DIR" -maxdepth 1 -mindepth 1 -uid 0 \
-        -exec chown "${SYSBOX_UID_OFFSET}:${SYSBOX_UID_OFFSET}" {} \; 2>/dev/null || true
-
-    # Background watcher: fix new dirs within ~1 s of container creation.
-    (
-        while true; do
-            for d in "${SYSBOX_DOCKER_DIR}"/*/; do
-                [ -d "$d" ] || continue
-                uid=$(stat -c '%u' "$d" 2>/dev/null) || continue
-                [ "$uid" = "0" ] && \
-                    chown "${SYSBOX_UID_OFFSET}:${SYSBOX_UID_OFFSET}" "$d" 2>/dev/null
-            done
-            sleep 1
-        done
-    ) &
-    DIND_WATCHER_PID=$!
-    echo "$DIND_WATCHER_PID" > "${RUN_DIR}/dind-watcher.pid"
-    STARTED_PIDS+=("$DIND_WATCHER_PID")
-    echo "  DinD ownership watcher started (uid offset ${SYSBOX_UID_OFFSET}, pid ${DIND_WATCHER_PID})"
-
     # --- 2. Create bridge ---
     if ! ip link show "$BRIDGE" &>/dev/null; then
         echo "Creating bridge ${BRIDGE}..."
@@ -876,12 +897,6 @@ cmd_start() {
 
 cmd_stop() {
     require_root
-
-    # Kill DinD ownership watcher
-    if [ -f "${RUN_DIR}/dind-watcher.pid" ]; then
-        kill "$(cat "${RUN_DIR}/dind-watcher.pid")" 2>/dev/null || true
-        rm -f "${RUN_DIR}/dind-watcher.pid"
-    fi
 
     # Reverse startup order: dockerd -> containerd -> sysbox
     stop_daemon dockerd "${EXEC_ROOT}/dockerd.pid" 20
@@ -1045,11 +1060,6 @@ cmd_destroy() {
         cmd_disable
     else
         # No systemd service — stop daemons directly
-        # Kill DinD watcher
-        if [ -f "${RUN_DIR}/dind-watcher.pid" ]; then
-            kill "$(cat "${RUN_DIR}/dind-watcher.pid")" 2>/dev/null || true
-            rm -f "${RUN_DIR}/dind-watcher.pid"
-        fi
         for pidfile in "${EXEC_ROOT}/dockerd.pid" "${RUN_DIR}/containerd.pid"; do
             if [ -f "$pidfile" ]; then
                 local pid
