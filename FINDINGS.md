@@ -105,11 +105,11 @@ Containers in instance A can reach instance B's bridge IP. This is expected Linu
 
 ---
 
-## sysbox-runc --run-dir CLI flag: seccomp socket not redirected (0.6.7.4–0.6.7.7-tc)
+## sysbox-runc --run-dir CLI flag: seccomp socket not redirected (0.6.7.4–0.6.7.8-tc)
 
-**Date**: 2026-02-24 (confirmed still broken in 0.6.7.5-tc, 0.6.7.6-tc, and 0.6.7.7-tc: 2026-02-25)
+**Date**: 2026-02-24 (confirmed still broken through 0.6.7.8-tc; fixed in 0.6.7.9-tc: 2026-02-25)
 **Severity**: Containers fail to start when `--run-dir` is used via `runtimeArgs`
-**Status**: Open — tracked in https://github.com/thieso2/sysbox/issues/4
+**Status**: RESOLVED in 0.6.7.9-tc — tracked in https://github.com/thieso2/sysbox/issues/5
 
 ### Symptom
 
@@ -158,9 +158,9 @@ because `SetRunDir` is called with the wrong value (the default).
 `SYSBOX_RUN_DIR` env var works correctly because `sysbox.go`'s `init()` reads it before
 `app.Before` runs — so `runDir` is set to the correct per-instance path from the start.
 
-### Workaround (current dockyard approach)
+### Workaround (used in dockyard 0.6.7.4-tc through 0.6.7.8-tc)
 
-Install sysbox-runc as a wrapper script that exports `SYSBOX_RUN_DIR` before exec'ing the real binary. The env var path correctly redirects all sockets including the seccomp tracer.
+Wrapper script that exports `SYSBOX_RUN_DIR` before exec'ing the real binary:
 
 ```sh
 #!/bin/sh
@@ -168,11 +168,15 @@ export SYSBOX_RUN_DIR="/dy1/sysbox-run"
 exec "/dy1/docker-runtime/bin/sysbox-runc-bin" "$@"
 ```
 
-daemon.json points to the wrapper with no `runtimeArgs`.
+daemon.json pointed to the wrapper with no `runtimeArgs`. No longer needed in 0.6.7.9-tc.
 
-### Fix needed
+### Fix (0.6.7.9-tc)
 
-The `--run-dir` flag must use `context.String("run-dir")` instead of `context.GlobalString("run-dir")` in `app.Before`, OR the flag must be registered on each subcommand (not just `app.Flags`). Alternatively, parse the flag value directly from `os.Args` before `app.Before` and call `os.Setenv("SYSBOX_RUN_DIR", val)` early, so `init()` gets the correct value.
+Extended `init()` in `sysbox.go` to scan `os.Args` directly for `--run-dir` before urfave/cli
+runs. This bypasses `context.GlobalString` entirely and makes `runtimeArgs` work correctly.
+The wrapper script and `sysbox-runc-bin` alias are no longer needed.
+
+See: https://github.com/thieso2/sysbox/issues/5
 
 ---
 

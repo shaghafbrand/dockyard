@@ -407,7 +407,7 @@ cmd_create() {
     #   Distributed as a static tarball (no .deb, no dpkg dependency).
     local DOCKER_VERSION="29.2.1"
     local DOCKER_ROOTLESS_VERSION="29.2.1"
-    local SYSBOX_VERSION="0.6.7.7-tc"
+    local SYSBOX_VERSION="0.6.7.9-tc"
     local SYSBOX_TARBALL="sysbox-static-x86_64.tar.gz"
 
     local DOCKER_URL="https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_VERSION}.tgz"
@@ -490,14 +490,10 @@ cmd_create() {
     local SYSBOX_EXTRACT="${CACHE_DIR}/sysbox-static-${SYSBOX_VERSION}"
     mkdir -p "$SYSBOX_EXTRACT"
     tar -xzf "${CACHE_DIR}/${SYSBOX_TARBALL}" -C "$SYSBOX_EXTRACT"
-    # sysbox-mgr and sysbox-fs go directly to BIN_DIR.
-    # sysbox-runc is installed as sysbox-runc-bin; a thin wrapper script at
-    # sysbox-runc exports SYSBOX_RUN_DIR so that sysbox.go's init() picks up
-    # the per-instance socket dir before any path is fixed.
-    # Note: passing --run-dir via daemon.json runtimeArgs does NOT work because
-    # urfave/cli v1's context.GlobalString("run-dir") in app.Before returns the
-    # default value, not the CLI-provided value. SYSBOX_RUN_DIR (read in init())
-    # is the only reliable path. See: https://github.com/thieso2/sysbox/issues/4
+    # All three sysbox binaries go directly to BIN_DIR.
+    # sysbox-runc 0.6.7.9-tc parses --run-dir directly from os.Args in init(),
+    # bypassing urfave/cli v1 entirely. runtimeArgs in daemon.json now works.
+    # See: https://github.com/thieso2/sysbox/issues/5
     for bin in sysbox-runc sysbox-mgr sysbox-fs; do
         local src
         src=$(find "$SYSBOX_EXTRACT" -name "$bin" -type f | head -1)
@@ -505,22 +501,9 @@ cmd_create() {
             echo "Error: $bin not found in ${SYSBOX_TARBALL}" >&2
             exit 1
         fi
-        if [ "$bin" = "sysbox-runc" ]; then
-            cp -f "$src" "$BIN_DIR/sysbox-runc-bin"
-            chmod +x "$BIN_DIR/sysbox-runc-bin"
-        else
-            cp -f "$src" "$BIN_DIR/$bin"
-            chmod +x "$BIN_DIR/$bin"
-        fi
+        cp -f "$src" "$BIN_DIR/$bin"
+        chmod +x "$BIN_DIR/$bin"
     done
-
-    # Install sysbox-runc wrapper: sets SYSBOX_RUN_DIR then exec's the real binary.
-    cat > "${BIN_DIR}/sysbox-runc" <<SYSBOXRUNCEOF
-#!/bin/sh
-export SYSBOX_RUN_DIR="${SYSBOX_RUN_DIR}"
-exec "${BIN_DIR}/sysbox-runc-bin" "\$@"
-SYSBOXRUNCEOF
-    chmod +x "${BIN_DIR}/sysbox-runc"
 
     mkdir -p "${RUNTIME_DIR}/lib/docker"
 
@@ -539,18 +522,15 @@ DOCKEREOF
     echo "Installed binaries to ${BIN_DIR}/"
 
     # Write daemon.json (embedded — no external file dependency)
-    # daemon.json points to the sysbox-runc wrapper (no runtimeArgs needed).
-    # The wrapper sets SYSBOX_RUN_DIR before exec'ing sysbox-runc-bin, which is
-    # read by sysbox.go's init() to configure all socket paths including
-    # sysfs-seccomp.sock. The --run-dir CLI flag path via runtimeArgs does not
-    # work: urfave/cli v1 context.GlobalString("run-dir") in app.Before returns
-    # the default, not the CLI value. See: https://github.com/thieso2/sysbox/issues/4
+    # sysbox-runc 0.6.7.9-tc parses --run-dir from os.Args in init(), so
+    # runtimeArgs works correctly. No wrapper script needed.
     cat > "${ETC_DIR}/daemon.json" <<DAEMONJSONEOF
 {
   "default-runtime": "sysbox-runc",
   "runtimes": {
     "sysbox-runc": {
-      "path": "${BIN_DIR}/sysbox-runc"
+      "path": "${BIN_DIR}/sysbox-runc",
+      "runtimeArgs": ["--run-dir", "${SYSBOX_RUN_DIR}"]
     }
   },
   "storage-driver": "overlay2",
