@@ -49,21 +49,19 @@ cmd_create() {
     #   sysbox procfs incompatibility (nestybox/sysbox#973).
     #   Minimum 29.x required for the DinD ownership watcher (commit 2deac51).
     #
-    # SYSBOX_VERSION: 0.6.7.4-tc is a patched fork (github.com/thieso2/sysbox)
-    #   that adds --run-dir to sysbox-mgr and sysbox-fs, and SYSBOX_RUN_DIR env
-    #   var support to sysbox-runc, allowing N independent sysbox instances per
-    #   host (each with its own socket dir).
-    #   NOTE: sysbox-runc's --run-dir CLI flag (also added in 0.6.7.4-tc) is
-    #   incomplete — it redirects sysmgr.sock and sysfs.sock but NOT the seccomp
-    #   tracer socket (sysfs-seccomp.sock), which is computed before app.Before
-    #   fires. The SYSBOX_RUN_DIR env var works correctly because init() runs
-    #   before all socket paths are fixed. So sysbox-runc is installed as a thin
-    #   wrapper script that sets SYSBOX_RUN_DIR before exec'ing the real binary.
-    #   See: https://github.com/thieso2/sysbox/issues/4
+    # SYSBOX_VERSION: 0.6.7.5-tc is a patched fork (github.com/thieso2/sysbox)
+    #   that adds --run-dir to sysbox-mgr and sysbox-fs, allowing N independent
+    #   sysbox instances per host (each with its own socket dir).
+    #   NOTE: sysbox-runc --run-dir via runtimeArgs still does NOT redirect the
+    #   seccomp tracer socket (sysfs-seccomp.sock) — the path is fixed in init()
+    #   before app.Before fires. Workaround: install sysbox-runc as a wrapper
+    #   script that exports SYSBOX_RUN_DIR, then exec the real binary. The env
+    #   var is read in init() so all three sockets are redirected correctly.
+    #   Tracked: https://github.com/thieso2/sysbox/issues/4
     #   Distributed as a static tarball (no .deb, no dpkg dependency).
     local DOCKER_VERSION="29.2.1"
     local DOCKER_ROOTLESS_VERSION="29.2.1"
-    local SYSBOX_VERSION="0.6.7.4-tc"
+    local SYSBOX_VERSION="0.6.7.5-tc"
     local SYSBOX_TARBALL="sysbox-static-x86_64.tar.gz"
 
     local DOCKER_URL="https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_VERSION}.tgz"
@@ -147,11 +145,10 @@ cmd_create() {
     mkdir -p "$SYSBOX_EXTRACT"
     tar -xzf "${CACHE_DIR}/${SYSBOX_TARBALL}" -C "$SYSBOX_EXTRACT"
     # sysbox-mgr and sysbox-fs go directly to BIN_DIR.
-    # sysbox-runc is installed as sysbox-runc-bin; a wrapper script at
-    # sysbox-runc sets SYSBOX_RUN_DIR so the binary's init() connects to
-    # this instance's per-instance sysbox sockets (including sysfs-seccomp.sock).
-    # Using --run-dir via runtimeArgs is incomplete in 0.6.7.4-tc (see comment
-    # above), so the env-var-via-wrapper approach is used instead.
+    # sysbox-runc is installed as sysbox-runc-bin; a wrapper script at sysbox-runc
+    # exports SYSBOX_RUN_DIR so init() redirects ALL sockets (including sysfs-seccomp.sock).
+    # Using runtimeArgs ["--run-dir", ...] does NOT work: the CLI flag is processed in
+    # app.Before, after init() has already fixed the seccomp socket path. See issue #4.
     for bin in sysbox-runc sysbox-mgr sysbox-fs; do
         local src
         src=$(find "$SYSBOX_EXTRACT" -name "$bin" -type f | head -1)
@@ -167,8 +164,10 @@ cmd_create() {
             chmod +x "$BIN_DIR/$bin"
         fi
     done
-    # Wrapper: sets SYSBOX_RUN_DIR so sysbox-runc-bin's init() redirects ALL
-    # per-instance sockets (sysmgr.sock, sysfs.sock, sysfs-seccomp.sock).
+
+    # Wrapper script: sets SYSBOX_RUN_DIR before exec'ing the real binary.
+    # The shebang must be the very first line — build.sh strips only the first
+    # line of each src/ file, so this heredoc shebang is preserved correctly.
     cat > "${BIN_DIR}/sysbox-runc" <<SYSBOXWRAPEOF
 #!/bin/sh
 export SYSBOX_RUN_DIR="${SYSBOX_RUN_DIR}"
@@ -193,8 +192,7 @@ DOCKEREOF
     echo "Installed binaries to ${BIN_DIR}/"
 
     # Write daemon.json (embedded — no external file dependency)
-    # sysbox-runc is a wrapper script that sets SYSBOX_RUN_DIR before exec'ing
-    # the real binary; no runtimeArgs needed.
+    # No runtimeArgs for sysbox-runc: SYSBOX_RUN_DIR is set by the wrapper script.
     cat > "${ETC_DIR}/daemon.json" <<DAEMONJSONEOF
 {
   "default-runtime": "sysbox-runc",

@@ -2,15 +2,15 @@
 
 ## Current Status: All 27 tests passing
 
-## Architecture: Per-Instance Sysbox (0.6.7.4-tc fork)
+## Architecture: Per-Instance Sysbox (0.6.7.5-tc fork)
 
 Nestybox sysbox 0.6.7 CE has hardcoded socket paths — only one sysbox pair can
-run per host. The fork (`github.com/thieso2/sysbox`, version `0.6.7.4-tc`) adds
+run per host. The fork (`github.com/thieso2/sysbox`, version `0.6.7.5-tc`) adds
 `--run-dir` to `sysbox-mgr` and `sysbox-fs`, and `SYSBOX_RUN_DIR` env var +
 `--run-dir` CLI flag to `sysbox-runc`. Each dockyard instance now runs its own
 fully isolated sysbox-mgr and sysbox-fs pair.
 
-Note: `sysbox-runc --run-dir` has a timing bug in 0.6.7.4-tc — the seccomp
+Note: `sysbox-runc --run-dir` still has a timing bug in 0.6.7.5-tc — the seccomp
 tracer socket (`sysfs-seccomp.sock`) is not redirected when `--run-dir` is
 passed via `runtimeArgs`. The `SYSBOX_RUN_DIR` env var (set via a thin wrapper
 script) works correctly. See FINDINGS.md and https://github.com/thieso2/sysbox/issues/4.
@@ -34,7 +34,7 @@ See [FINDINGS.md](FINDINGS.md) for the full root-cause analysis.
 |----------|---------|--------|
 | Docker CE (static) | 29.2.1 | Latest stable |
 | docker:26.1-dind | 26.1 | runc 1.1.12 — compatible with sysbox 0.6.7 |
-| Sysbox (fork) | 0.6.7.4-tc | Adds --run-dir; allows per-instance sysbox |
+| Sysbox (fork) | 0.6.7.5-tc | Adds --run-dir; allows per-instance sysbox |
 
 `docker:dind` latest (27.x) uses runc 1.3.3 which has a strict procfs check
 incompatible with sysbox's bind-mount of `/proc/sys` entries.
@@ -106,7 +106,7 @@ Results are sorted by instance label before printing.
 
 - [x] All 27 tests pass on target VM (100.106.185.92)
 - [x] Per-test timing output
-- [x] Per-instance sysbox via 0.6.7.4-tc fork
+- [x] Per-instance sysbox via 0.6.7.5-tc fork
 - [x] sysbox-runc wrapper script (sets SYSBOX_RUN_DIR)
 - [x] build.sh awk fix for heredoc shebangs
 - [x] Per-instance user/group (`${PREFIX}docker`)

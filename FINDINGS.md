@@ -105,9 +105,9 @@ Containers in instance A can reach instance B's bridge IP. This is expected Linu
 
 ---
 
-## sysbox-runc --run-dir CLI flag: seccomp socket not redirected (0.6.7.4-tc)
+## sysbox-runc --run-dir CLI flag: seccomp socket not redirected (0.6.7.4-tc, 0.6.7.5-tc)
 
-**Date**: 2026-02-24
+**Date**: 2026-02-24 (confirmed still broken in 0.6.7.5-tc: 2026-02-25)
 **Severity**: Containers fail to start when `--run-dir` is used via `runtimeArgs`
 **Status**: Open — tracked in https://github.com/thieso2/sysbox/issues/4
 
@@ -121,19 +121,34 @@ Unable to establish connection with seccomp-tracer:
 dial unix /run/sysbox/sysfs-seccomp.sock: connect: no such file or directory
 ```
 
+This error occurs even though `sysfs-seccomp.sock` **is** correctly created at the
+per-instance run-dir (e.g. `/dy1/sysbox-run/sysfs-seccomp.sock`). sysbox-runc ignores
+the relocated socket and still dials the hardcoded `/run/sysbox/sysfs-seccomp.sock`.
+
+Confirmed present in both 0.6.7.4-tc and 0.6.7.5-tc despite the `--run-dir` CLI flag
+being added to sysbox-runc in both releases.
+
 ### Root cause: init() vs app.Before() timing
 
 `sysbox-runc` processes `--run-dir` in `app.Before`, which fires after all `init()` functions have run. The `sysfs-seccomp.sock` path is computed at init time from the default `runDir = "/run/sysbox"` and is not updated when `SetRunDir` is later called from `app.Before`.
 
 `SYSBOX_RUN_DIR` env var works correctly because `sysbox.go`'s `init()` calls `SetRunDir()` before any socket path is fixed — so all three sockets (sysmgr, sysfs, sysfs-seccomp) pick up the correct directory.
 
-### Workaround
+### Workaround (current dockyard approach)
 
 Install sysbox-runc as a wrapper script that exports `SYSBOX_RUN_DIR` before exec'ing the real binary. The env var path correctly redirects all sockets including the seccomp tracer.
 
+```sh
+#!/bin/sh
+export SYSBOX_RUN_DIR="/dy1/sysbox-run"
+exec "/dy1/docker-runtime/bin/sysbox-runc-bin" "$@"
+```
+
+daemon.json points to the wrapper with no `runtimeArgs`.
+
 ### Fix needed
 
-`SetRunDir()` (or the seccomp socket path construction) must also update `sysfs-seccomp.sock` to use the provided dir, not the initial `/run/sysbox` default.
+`SetRunDir()` (or the seccomp socket path construction) must also update `sysfs-seccomp.sock` to use the provided dir, not the initial `/run/sysbox` default. Alternatively, `--run-dir` processing should move from `app.Before` to an `init()` function so it fires before any socket path is fixed.
 
 ---
 
