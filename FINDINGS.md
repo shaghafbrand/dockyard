@@ -176,6 +176,72 @@ See: https://github.com/thieso2/sysbox/issues/5
 
 ---
 
+## sysbox 0.6.7 incompatible with Linux kernel 6.17 (Ubuntu 25.10+)
+
+**Date**: 2026-02-25
+**Severity**: Hard blocker — containers fail to start; no workaround without patching sysbox-runc
+**Status**: OPEN — sysbox 0.6.7.x not fixed; Ubuntu 24.04 LTS (kernel 6.8) confirmed working
+
+### Symptom
+
+`docker run` exits immediately with:
+
+```
+docker: Error response from daemon: failed to create task for container:
+failed to create shim task: OCI runtime create failed:
+runc create failed: ... EOF
+```
+
+The error appears generic. The OCI runtime log is deleted by containerd before it can be read directly.
+
+### Diagnosis
+
+Install a debug wrapper at the sysbox-runc binary path that copies `--log` output before exec:
+
+```sh
+#!/bin/sh
+LOGFILE="/tmp/sysbox-runc-$$.json"
+exec /path/to/sysbox-runc-real --log "$LOGFILE" "$@"
+```
+
+The captured `log.json` shows the fatal entry:
+
+```
+nsexec:1050 nsenter: failed to set rootfs parent mount propagation to private: Permission denied
+```
+
+### Root cause
+
+`nsexec.c` in sysbox-runc (the C preamble that runs before the Go runtime) calls:
+
+```c
+mount("", "/", "", MS_PRIVATE | MS_REC, "")
+```
+
+This attempts to change the root mount's propagation to private from within a new user+mount namespace. On **kernel 6.17** (Ubuntu 25.10+), inherited mounts owned by the parent user namespace cannot have their propagation changed from a child user namespace — the kernel returns `EPERM`.
+
+This restriction was tightened in the upstream kernel. Mainline `runc` ≥ 1.2 handles it gracefully; sysbox-runc 0.6.7.x does not.
+
+**Confirmed not fixable by**:
+- `--privileged` — nsexec runs before privilege escalation is meaningful here
+- `--security-opt seccomp=unconfined` — not a seccomp issue
+- AppArmor changes — not an AppArmor issue
+- `SYSBOX_RUN_DIR` / `--run-dir` flags — unrelated to namespace setup
+
+### Affected environments
+
+| Distro | Kernel | Status |
+|--------|--------|--------|
+| Ubuntu 25.10 | 6.17 | ❌ broken |
+| Ubuntu 24.04 LTS | 6.8 | ✅ confirmed working |
+| Ubuntu 22.04 LTS | 5.15 | ✅ expected working |
+
+### Fix
+
+Requires patching `nsexec.c` in sysbox-runc to handle `EPERM` on the `mount --make-private` call gracefully (or skip it when running in a user namespace where the mount is owned by the parent). No patch is available in 0.6.7.x as of 2026-02-25.
+
+---
+
 ## Test cleanup check false negative
 
 **Date**: 2026-02-23

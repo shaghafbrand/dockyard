@@ -497,6 +497,9 @@ cmd_create() {
         if ! grep -qF "$apparmor_begin" "$apparmor_file" 2>/dev/null; then
             {
                 echo "$apparmor_begin"
+                # Ubuntu 25.10+ comments out dac_override in the base fusermount3
+                # profile (LP: #2122161). sysbox-fs needs it for FUSE mounts.
+                echo "capability dac_override,"
                 echo "mount fstype=fuse options=(nosuid,nodev) options in (ro,rw) -> ${SYSBOX_DATA_DIR}/**/,"
                 echo "umount ${SYSBOX_DATA_DIR}/**/,"
                 echo "$apparmor_end"
