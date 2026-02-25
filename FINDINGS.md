@@ -4,7 +4,7 @@
 
 **Date**: 2026-02-23
 **Severity**: Architectural blocker for naive per-instance sysbox
-**Status**: RESOLVED — forked sysbox (0.6.7.4-tc)
+**Status**: RESOLVED — forked sysbox (0.6.7.10-tc)
 
 `sysbox-fs` and `sysbox-mgr` have NO flag to change their socket paths:
 - `/run/sysbox/sysfs.sock` — hardcoded in sysbox-fs
@@ -26,11 +26,7 @@ An intermediate architecture used a single shared `dockyard-sysbox.service` per 
 
 ### Final solution: Fork sysbox to add `--run-dir`
 
-The fork (`github.com/thieso2/sysbox`, version `0.6.7.4-tc`) adds:
-- `--run-dir <dir>` flag to `sysbox-mgr` and `sysbox-fs` — configures the socket/pid directory
-- `SYSBOX_RUN_DIR` environment variable support in `sysbox-runc`
-
-Each dockyard instance now starts its own sysbox-mgr and sysbox-fs with a unique `--run-dir` pointing to `${DOCKYARD_ROOT}/sysbox-run/`. There is no shared sysbox service.
+The fork (`github.com/thieso2/sysbox`, version `0.6.7.10-tc`) adds `--run-dir <dir>` to all three sysbox binaries — `sysbox-mgr`, `sysbox-fs`, and `sysbox-runc`. Each dockyard instance now starts its own sysbox-mgr and sysbox-fs with a unique `--run-dir` pointing to `${DOCKYARD_ROOT}/run/sysbox/`. There is no shared sysbox service. `--run-dir` is passed via `runtimeArgs` in `daemon.json`; no wrapper script is needed.
 
 ---
 
@@ -47,8 +43,8 @@ Each dockyard instance now starts its own sysbox-mgr and sysbox-fs with a unique
 
 ```sh
 #!/bin/sh
-export SYSBOX_RUN_DIR="/dy1/sysbox-run"
-exec "/dy1/docker-runtime/bin/sysbox-runc-bin" "$@"
+export SYSBOX_RUN_DIR="/dy1/run/sysbox"
+exec "/dy1/bin/sysbox-runc-bin" "$@"
 ```
 
 daemon.json's `runtimes` block points to the wrapper with no `runtimeArgs`.
@@ -122,7 +118,7 @@ dial unix /run/sysbox/sysfs-seccomp.sock: connect: no such file or directory
 ```
 
 This error occurs even though `sysfs-seccomp.sock` **is** correctly created at the
-per-instance run-dir (e.g. `/dy1/sysbox-run/sysfs-seccomp.sock`). sysbox-runc ignores
+per-instance run-dir (e.g. `/dy1/run/sysbox/sysfs-seccomp.sock`). sysbox-runc ignores
 the relocated socket and still dials the hardcoded `/run/sysbox/sysfs-seccomp.sock`.
 
 Confirmed present in 0.6.7.4-tc through 0.6.7.7-tc. The `SYSBOX_RUN_DIR` env var path
@@ -133,22 +129,22 @@ Confirmed present in 0.6.7.4-tc through 0.6.7.7-tc. The `SYSBOX_RUN_DIR` env var
 Instrumented with a debug wrapper at the sysbox-runc binary path. Confirmed:
 
 1. containerd calls `sysbox-runc` directly (not via Docker-generated shim) with:
-   `--run-dir /dy1/sysbox-run ... create --bundle ...`
+   `--run-dir /dy1/run/sysbox ... create --bundle ...`
 2. `SYSBOX_RUN_DIR` is **not set** in containerd's environment
 3. `sysbox.go init()` runs → reads unset `SYSBOX_RUN_DIR` → `runDir = "/run/sysbox"`
 4. `app.Before()` calls `sysbox.SetRunDir(context.GlobalString("run-dir"))`
-5. Despite `--run-dir /dy1/sysbox-run` in argv, `context.GlobalString("run-dir")` returns
+5. Despite `--run-dir /dy1/run/sysbox` in argv, `context.GlobalString("run-dir")` returns
    the default `/run/sysbox` — urfave/cli v1 bug with global flags before subcommands
 6. `SetRunDir("/run/sysbox")` is a no-op (same as default)
 7. `SendSeccompInit` dials `/run/sysbox/sysfs-seccomp.sock` → fails
 
-Adding `export SYSBOX_RUN_DIR=/dy1/sysbox-run` to the wrapper env makes it work instantly —
+Adding `export SYSBOX_RUN_DIR=/dy1/run/sysbox` to the wrapper env makes it work instantly —
 confirming the env var path through `init()` is the only reliable mechanism.
 
 ### Root cause: urfave/cli v1 GlobalString in app.Before
 
 `context.GlobalString("run-dir")` in `app.Before` does not return the CLI-provided value
-`/dy1/sysbox-run`. It returns the flag default `/run/sysbox`. This is a known urfave/cli v1
+`/dy1/run/sysbox`. It returns the flag default `/run/sysbox`. This is a known urfave/cli v1
 quirk where global flags passed before a subcommand may not be visible to `app.Before`'s
 root context via `GlobalString`.
 
@@ -164,8 +160,8 @@ Wrapper script that exports `SYSBOX_RUN_DIR` before exec'ing the real binary:
 
 ```sh
 #!/bin/sh
-export SYSBOX_RUN_DIR="/dy1/sysbox-run"
-exec "/dy1/docker-runtime/bin/sysbox-runc-bin" "$@"
+export SYSBOX_RUN_DIR="/dy1/run/sysbox"
+exec "/dy1/bin/sysbox-runc-bin" "$@"
 ```
 
 daemon.json pointed to the wrapper with no `runtimeArgs`. No longer needed in 0.6.7.9-tc.

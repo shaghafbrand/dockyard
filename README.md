@@ -27,7 +27,7 @@ curl -O https://raw.githubusercontent.com/thieso2/dockyard/refs/heads/main/docky
 sudo ./dockyard.sh create
 
 # Run a container (uses sysbox-runc automatically)
-/dockyard/docker-runtime/bin/docker run --rm -it alpine ash
+/dockyard/bin/docker run --rm -it alpine ash
 ```
 
 ## Multiple Instances
@@ -77,7 +77,7 @@ All commands except `gen-env` require a config file. Lookup order:
 1. `$DOCKYARD_ENV` if set → use that file
 2. `./dockyard.env` in current directory
 3. `../etc/dockyard.env` relative to the script (for the installed copy)
-4. `$DOCKYARD_ROOT/docker-runtime/etc/dockyard.env`
+4. `$DOCKYARD_ROOT/etc/dockyard.env`
 
 ## What Gets Installed
 
@@ -87,33 +87,35 @@ The installer downloads static binaries (cached in `.tmp/` for repeated installs
 |----------|---------|----------|
 | [Docker CE](https://download.docker.com/linux/static/stable/x86_64/) | 29.2.1 | dockerd, containerd, docker, ctr, runc, etc. |
 | [Docker Rootless Extras](https://download.docker.com/linux/static/stable/x86_64/) | 29.2.1 | dockerd-rootless, vpnkit, rootlesskit, etc. |
-| [Sysbox fork](https://github.com/thieso2/sysbox) | 0.6.7.4-tc | sysbox-mgr, sysbox-fs, sysbox-runc-bin (all per-instance) |
+| [Sysbox fork](https://github.com/thieso2/sysbox) | 0.6.7.10-tc | sysbox-mgr, sysbox-fs, sysbox-runc (all per-instance) |
 
 All three sysbox binaries are per-instance. There is no shared sysbox host daemon.
 
 ```
 ${DOCKYARD_ROOT}/                       # owned by ${PREFIX}docker user/group
-├── docker.sock                         # Docker API socket (root:${PREFIX}docker 660)
-├── docker/                             # Images, containers, volumes
-│   └── containerd/
-├── sysbox-run/                         # Per-instance sysbox sockets + PID files
-│   ├── sysmgr.sock
-│   ├── sysfs.sock
-│   ├── sysbox-mgr.pid
-│   └── sysbox-fs.pid
-├── sysbox/                             # sysbox-mgr data-root + sysbox-fs mountpoint
-└── docker-runtime/
-    ├── bin/                            # dockerd, containerd, sysbox-mgr, sysbox-fs,
-    │                                   # sysbox-runc (wrapper), sysbox-runc-bin (binary),
-    │                                   # docker-cli, docker (wrapper), dockyardctl
-    ├── etc/
-    │   ├── daemon.json                 # Daemon configuration
-    │   └── dockyard.env                # Copy of config (written by create)
-    ├── log/                            # containerd.log, dockerd.log, sysbox-mgr.log, sysbox-fs.log
-    └── run/                            # PID files
+├── bin/                                # dockerd, containerd, sysbox-mgr, sysbox-fs,
+│                                       # sysbox-runc, docker (DOCKER_HOST wrapper), dockyardctl
+├── etc/
+│   ├── daemon.json                     # Daemon configuration
+│   └── dockyard.env                    # Copy of config (written by create)
+├── lib/
+│   ├── docker/                         # Images, containers, volumes
+│   │   └── containerd/
+│   ├── sysbox/                         # sysbox-mgr data-root + sysbox-fs mountpoint
+│   └── docker-config/                  # DOCKER_CONFIG dir (auth, config.json)
+├── log/                                # containerd.log, dockerd.log, sysbox-mgr.log, sysbox-fs.log
+└── run/                                # All runtime sockets + PIDs
+    ├── docker.sock                     # Docker API socket (root:${PREFIX}docker 660)
+    ├── dockerd.pid
+    ├── containerd/
+    │   └── containerd.sock
+    └── sysbox/                         # Per-instance sysbox sockets + PID files
+        ├── sysmgr.sock
+        ├── sysfs.sock
+        ├── sysbox-mgr.pid
+        └── sysbox-fs.pid
 
 /etc/systemd/system/${PREFIX}docker.service   # Per-instance docker unit (no shared sysbox unit)
-/run/${PREFIX}docker/                         # Runtime state (tmpfs)
 /etc/apparmor.d/local/fusermount3             # Per-instance AppArmor block
 ```
 
@@ -139,21 +141,21 @@ Every rule is scoped to the instance's bridge name, so instances can never inter
 Each dockyard instance includes a `docker` wrapper that sets the correct `DOCKER_HOST` automatically:
 
 ```bash
-/dockyard/docker-runtime/bin/docker ps      # dockyard instance
-docker ps                                    # system docker (unchanged)
+/dockyard/bin/docker ps      # dockyard instance
+docker ps                     # system docker (unchanged)
 ```
 
 Or use `DOCKER_HOST` directly:
 
 ```bash
-export DOCKER_HOST=unix:///dockyard/docker.sock
+export DOCKER_HOST=unix:///dockyard/run/docker.sock
 ```
 
 ## Why Sysbox is Forked
 
 Nestybox sysbox 0.6.7 CE hardcodes its socket paths (`/run/sysbox/sysmgr.sock`, `/run/sysbox/sysfs.sock`) with no flag to change them. Only one sysbox-mgr + sysbox-fs pair can run per host, which conflicts with the goal of fully independent per-instance isolation.
 
-The fork (`github.com/thieso2/sysbox`, version `0.6.7.4-tc`) adds a `--run-dir <dir>` flag to `sysbox-mgr` and `sysbox-fs`, and a `SYSBOX_RUN_DIR` environment variable to `sysbox-runc`. Each dockyard instance points its sysbox pair at `${DOCKYARD_ROOT}/sysbox-run/`, giving N fully isolated sysbox instances on the same host.
+The fork (`github.com/thieso2/sysbox`, version `0.6.7.10-tc`) adds `--run-dir <dir>` to all three sysbox binaries. Each dockyard instance points its sysbox pair at `${DOCKYARD_ROOT}/run/sysbox/`, giving N fully isolated sysbox instances on the same host. `--run-dir` is passed via `runtimeArgs` in `daemon.json` — no wrapper script needed.
 
 ## Prerequisites
 

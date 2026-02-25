@@ -1,11 +1,11 @@
 # Progress
 
-## Current Status: All 27 tests passing
+## Current Status: All 28 tests passing
 
-## Architecture: Per-Instance Sysbox (0.6.7.9-tc fork)
+## Architecture: Per-Instance Sysbox (0.6.7.10-tc fork)
 
 Nestybox sysbox 0.6.7 CE has hardcoded socket paths — only one sysbox pair can
-run per host. The fork (`github.com/thieso2/sysbox`, version `0.6.7.9-tc`) adds
+run per host. The fork (`github.com/thieso2/sysbox`, version `0.6.7.10-tc`) adds
 `--run-dir` to `sysbox-mgr`, `sysbox-fs`, and `sysbox-runc`. Each dockyard instance
 now runs its own fully isolated sysbox-mgr and sysbox-fs pair, and `--run-dir` is
 passed via `runtimeArgs` in `daemon.json` with no wrapper script needed.
@@ -21,9 +21,9 @@ See [FINDINGS.md](FINDINGS.md) for the full root-cause analysis.
 
 | Resource | Architecture |
 |----------|-------------|
-| sysbox-mgr + sysbox-fs | Per-instance in `${DOCKYARD_ROOT}/docker-runtime/bin/` |
-| sysbox socket/PID dir | Per-instance `${DOCKYARD_ROOT}/sysbox-run/` |
-| sysbox data/mountpoint | Per-instance `${DOCKYARD_ROOT}/sysbox/` |
+| sysbox-mgr + sysbox-fs | Per-instance in `${DOCKYARD_ROOT}/bin/` |
+| sysbox socket/PID dir | Per-instance `${DOCKYARD_ROOT}/run/sysbox/` |
+| sysbox data/mountpoint | Per-instance `${DOCKYARD_ROOT}/lib/sysbox/` |
 | sysbox-runc | Per-instance in `${BIN_DIR}/`; `--run-dir` passed via `runtimeArgs` |
 | systemd service | Per-instance `${PREFIX}docker.service` only (no shared sysbox service) |
 | sysbox start/stop | Inline ExecStartPre/ExecStopPost in the docker service |
@@ -34,7 +34,7 @@ See [FINDINGS.md](FINDINGS.md) for the full root-cause analysis.
 |----------|---------|--------|
 | Docker CE (static) | 29.2.1 | Latest stable |
 | docker:26.1-dind | 26.1 | runc 1.1.12 — compatible with sysbox 0.6.7 |
-| Sysbox (fork) | 0.6.7.9-tc | --run-dir works via runtimeArgs; no wrapper needed |
+| Sysbox (fork) | 0.6.7.10-tc | --run-dir works via runtimeArgs; no wrapper needed |
 
 `docker:dind` latest (27.x) uses runc 1.3.3 which has a strict procfs check
 incompatible with sysbox's bind-mount of `/proc/sys` entries.
@@ -76,7 +76,7 @@ inside heredocs.
 
 ### Test Suite (cmd/dockyardtest/main.go)
 
-27 tests across 3 instances (A=dy1_, B=dy2_, C=dy3_). Per-test timing shown in
+28 tests across 3 instances (A=dy1_, B=dy2_, C=dy3_) plus 1 nested-root test. Per-test timing shown in
 output; total elapsed printed in summary.
 
 | Phase | Tests | Description |
@@ -98,22 +98,24 @@ output; total elapsed printed in summary.
 | Post-reboot health | 21–24 | Services, containers, networking, DinD on B+C |
 | Final teardown | 25–26 | Destroy B and C |
 | Full cleanup | 27 | No residual services, bridges, iptables, data dirs, users/groups |
+| Nested root | 28 | DOCKYARD_ROOT at a deeply nested path — full lifecycle |
 
 Tests 05, 07–13, 19–24 run instance-level checks concurrently using goroutines.
 Results are sorted by instance label before printing.
 
 ## Completed
 
-- [x] All 27 tests pass on target VM (100.106.185.92)
+- [x] All 28 tests pass on target VM (100.106.185.92)
 - [x] Per-test timing output
-- [x] Per-instance sysbox via 0.6.7.9-tc fork
+- [x] Per-instance sysbox via 0.6.7.10-tc fork
 - [x] sysbox-runc --run-dir via runtimeArgs (no wrapper script)
 - [x] build.sh awk fix for heredoc shebangs
 - [x] Per-instance user/group (`${PREFIX}docker`)
 - [x] Socket group ownership verified in test suite
+- [x] FHS-aligned directory layout (bin/, etc/, lib/, log/, run/ under DOCKYARD_ROOT)
+- [x] Nested DOCKYARD_ROOT path test (test 28)
 
 ## Pending
 
-- [x] sysbox-runc `--run-dir` via runtimeArgs fixed in 0.6.7.9-tc (os.Args parsing in init(), bypasses urfave/cli v1)
 - [ ] Add arm64 support (low priority)
 - [ ] Non-Ubuntu OS compatibility (low priority)

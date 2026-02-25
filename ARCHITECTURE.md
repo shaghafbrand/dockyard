@@ -26,25 +26,25 @@ graph TB
     subgraph "Host systemd"
         subgraph "Instance A  dy1_"
             SB1["sysbox-mgr + sysbox-fs
-dy1/sysbox-run"]
+dy1/run/sysbox"]
             D1["containerd + dockerd
-dy1 docker.sock"]
+dy1/run/docker.sock"]
             SB1 -->|"ready"| D1
         end
 
         subgraph "Instance B  dy2_"
             SB2["sysbox-mgr + sysbox-fs
-dy2/sysbox-run"]
+dy2/run/sysbox"]
             D2["containerd + dockerd
-dy2 docker.sock"]
+dy2/run/docker.sock"]
             SB2 -->|"ready"| D2
         end
 
         subgraph "Instance C  dy3_"
             SB3["sysbox-mgr + sysbox-fs
-dy3/sysbox-run"]
+dy3/run/sysbox"]
             D3["containerd + dockerd
-dy3 docker.sock"]
+dy3/run/docker.sock"]
             SB3 -->|"ready"| D3
         end
     end
@@ -86,29 +86,16 @@ Because every rule references `${BRIDGE}` (e.g. `dy1_docker0`), instances are ma
 
 There is no flag to change them. Running two sysbox-mgr processes on the same host is physically impossible — they fight over the same socket file. An earlier architecture worked around this by using a single shared `dockyard-sysbox.service`, but that means all instances share one sysbox process.
 
-**The solution: fork sysbox.** The fork (`github.com/thieso2/sysbox`, version `0.6.7.4-tc`) adds two capabilities:
+**The solution: fork sysbox.** The fork (`github.com/thieso2/sysbox`, version `0.6.7.10-tc`) adds `--run-dir <dir>` to all three sysbox binaries — `sysbox-mgr`, `sysbox-fs`, and `sysbox-runc`. `SetRunDir()` calls `os.Setenv("SYSBOX_RUN_DIR", dir)`, so passing `--run-dir` via `runtimeArgs` in `daemon.json` works correctly for all sockets including the seccomp tracer. No wrapper script is needed.
 
-1. `--run-dir <dir>` flag on `sysbox-mgr` and `sysbox-fs` — sets the directory for socket files and PID files
-2. `SYSBOX_RUN_DIR` environment variable in `sysbox-runc` — consumed in `libsysbox/sysbox/sysbox.go` `init()`, calls `SetSockAddr()` on both gRPC clients
-
-Each dockyard instance points its sysbox pair at its own directory:
+Each dockyard instance points its sysbox pair at its own directories (FHS layout):
 
 ```
-${DOCKYARD_ROOT}/sysbox-run/    sockets (sysmgr.sock, sysfs.sock) + PID files
-${DOCKYARD_ROOT}/sysbox/        sysbox-mgr data-root + sysbox-fs mountpoint
+${DOCKYARD_ROOT}/run/sysbox/    sockets (sysmgr.sock, sysfs.sock) + PID files
+${DOCKYARD_ROOT}/lib/sysbox/    sysbox-mgr data-root + sysbox-fs mountpoint
 ```
 
-All three sysbox binaries are per-instance inside `${BIN_DIR}/`.
-
-**sysbox-runc wrapper.** sysbox-runc does not accept `--run-dir` as a CLI flag, and passing it via `runtimeArgs` in daemon.json causes exit status 1. Instead, the real binary is installed as `sysbox-runc-bin` and a thin shell wrapper is installed at `sysbox-runc`:
-
-```sh
-#!/bin/sh
-export SYSBOX_RUN_DIR="${DOCKYARD_ROOT}/sysbox-run"
-exec "${BIN_DIR}/sysbox-runc-bin" "$@"
-```
-
-daemon.json's `runtimes` block points to the wrapper with no `runtimeArgs`.
+All three sysbox binaries are per-instance inside `${BIN_DIR}/` (`${DOCKYARD_ROOT}/bin/`).
 
 **Lifecycle.** sysbox-mgr and sysbox-fs start as `ExecStartPre` steps inside the per-instance docker service and are killed in `ExecStopPost`. There is no shared service and no ref-counting. Destroying any instance affects only its own sysbox processes.
 
@@ -131,7 +118,7 @@ Versions are pinned explicitly in `cmd_create()`:
 |--------|---------|--------|
 | Docker CE static | 29.2.1 | download.docker.com |
 | Docker Rootless Extras | 29.2.1 | download.docker.com |
-| Sysbox fork (static tarball) | 0.6.7.4-tc | github.com/thieso2/sysbox |
+| Sysbox fork (static tarball) | 0.6.7.10-tc | github.com/thieso2/sysbox |
 
 ---
 
@@ -143,11 +130,11 @@ Versions are pinned explicitly in `cmd_create()`:
 - dpkg registers the package in the system package database, entangling upgrades and removals.
 - The upstream release does not include `--run-dir` support.
 
-**Static tarball from the fork.** The fork (`github.com/thieso2/sysbox`) publishes a static tarball containing all three binaries: `sysbox-mgr`, `sysbox-fs`, and `sysbox-runc`. Downloaded once, cached in `.tmp/`, extracted directly into `${BIN_DIR}/`. No package database, no system service files, no side effects.
+**Static tarball from the fork.** The fork (`github.com/thieso2/sysbox`) publishes a static tarball containing all three binaries: `sysbox-mgr`, `sysbox-fs`, and `sysbox-runc`. Downloaded once, cached in `.tmp/`, extracted directly into `${BIN_DIR}/` (`${DOCKYARD_ROOT}/bin/`). No package database, no system service files, no side effects.
 
-The real `sysbox-runc` binary is renamed to `sysbox-runc-bin` at install time, and a wrapper script (see section 2) is written at `sysbox-runc`. daemon.json points to the wrapper.
+`daemon.json` passes `--run-dir ${SYSBOX_RUN_DIR}` via `runtimeArgs`. No wrapper script is needed.
 
-`dpkg-deb` is no longer required.
+`dpkg-deb` is not required.
 
 ---
 
@@ -158,10 +145,11 @@ The generated `.service` file has all paths expanded at create time:
 ```ini
 [Service]
 ExecStartPre=/sbin/iptables -I FORWARD -i dy1_docker0 -o dy1_docker0 -j ACCEPT
-ExecStart=/dy1/docker-runtime/bin/dockerd \
-    --data-root /dy1/docker \
-    --pidfile /dy1/docker-runtime/run/dockerd.pid \
-    --host unix:///dy1/docker.sock \
+ExecStart=/dy1/bin/dockerd \
+    --data-root /dy1/lib/docker \
+    --exec-root /dy1/run \
+    --pidfile /dy1/run/dockerd.pid \
+    --host unix:///dy1/run/docker.sock \
     ...
 ExecStopPost=/sbin/iptables -D FORWARD -i dy1_docker0 -o dy1_docker0 -j ACCEPT
 ```
@@ -185,12 +173,11 @@ for bridge CIDR"]
 for pool base"]
     D --> E["check_prefix_conflict
 bridge exists?
-exec-root dir exists?
 systemd service exists?"]
     E -->|"collision"| F["Retry up to 10x"]
     F --> B
     E -->|"clear"| G["check_root_conflict
-docker-runtime/bin present?"]
+bin/ present at root?"]
     G -->|"exists"| H["Error: already installed"]
     G -->|"clear"| I["Write dockyard.env"]
 ```
@@ -216,7 +203,7 @@ With a per-instance group:
 **How it works.** dockerd accepts a `--group` flag that controls the group ownership of the socket it creates. With `--group dy1_docker`, the socket is created as `root:dy1_docker` mode `660`. dockerd itself continues to run as root (required for bridge creation, iptables, and sysbox) — the group only controls socket access.
 
 ```
-/dy1/docker.sock   root:dy1_docker  660
+/dy1/run/docker.sock   root:dy1_docker  660
 ```
 
 User/group creation happens during `create`, removal during `destroy`. Both operations are idempotent.
@@ -241,11 +228,11 @@ sequenceDiagram
     participant CT as containerd
     participant DK as dockerd
 
-    SD->>SM: ExecStartPre: sysbox-mgr --run-dir sysbox-run
-    SM-->>SD: sysmgr.sock ready
+    SD->>SM: ExecStartPre: sysbox-mgr --run-dir run/sysbox
+    SM-->>SD: run/sysbox/sysmgr.sock ready
 
-    SD->>SF: ExecStartPre: sysbox-fs --run-dir sysbox-run
-    SF-->>SD: sysfs.sock ready
+    SD->>SF: ExecStartPre: sysbox-fs --run-dir run/sysbox
+    SF-->>SD: run/sysbox/sysfs.sock ready
 
     SD->>SD: ExecStartPre: iptables rules inserted
     Note over SD: FORWARD and NAT MASQUERADE
@@ -254,11 +241,11 @@ sequenceDiagram
     CT-->>DK: containerd ready
 
     SD->>DK: ExecStart: dockerd --group dy1_docker
-    Note over DK: Registers sysbox-runc wrapper<br/>Listens on dy1 docker.sock
+    Note over DK: sysbox-runc via runtimeArgs<br/>Listens on dy1/run/docker.sock
     DK-->>SD: Active
 ```
 
-On shutdown the sequence reverses: dockerd stops, containerd stops, `ExecStopPost` removes iptables rules, kills sysbox-fs, kills sysbox-mgr, and removes `${SYSBOX_RUN_DIR}`.
+On shutdown the sequence reverses: dockerd stops, containerd stops, `ExecStopPost` removes iptables rules, kills sysbox-fs, kills sysbox-mgr, and removes `${SYSBOX_RUN_DIR}` (`run/sysbox/`).
 
 ---
 
@@ -323,39 +310,33 @@ This constraint is sysbox upstream issue #1756 and is tracked in `FINDINGS.md`.
 
 ```
 ${DOCKYARD_ROOT}/
-├── docker.sock                API socket for this instance (root:${PREFIX}docker 660)
-├── docker/                    Docker data root (images, containers, volumes)
-│   └── containerd/            Containerd content store
-├── sysbox-run/                Per-instance sysbox sockets + PID files
-│   ├── sysmgr.sock
-│   ├── sysfs.sock
-│   ├── sysbox-mgr.pid
-│   └── sysbox-fs.pid
-├── sysbox/                    sysbox-mgr data-root + sysbox-fs mountpoint
-└── docker-runtime/
-    ├── bin/                   dockerd, containerd, ctr, runc
-    │                          sysbox-mgr, sysbox-fs
-    │                          sysbox-runc (wrapper script)
-    │                          sysbox-runc-bin (actual binary)
-    │                          docker-cli, docker (DOCKER_HOST wrapper)
-    │                          dockyardctl (copy of dockyard.sh)
-    ├── etc/
-    │   ├── daemon.json        Generated daemon config
-    │   └── dockyard.env       Copy of the env file for this instance
-    ├── lib/
-    │   └── docker/            DOCKER_CONFIG dir (auth, config.json)
-    ├── log/
-    │   ├── containerd.log
-    │   ├── dockerd.log
-    │   ├── sysbox-mgr.log
-    │   └── sysbox-fs.log
-    └── run/
-        └── containerd.pid
-
-/run/${PREFIX}docker/          Tmpfs runtime state
+├── bin/                       dockerd, containerd, docker-cli,
+│                              docker (DOCKER_HOST wrapper), dockyardctl,
+│                              sysbox-mgr, sysbox-fs, sysbox-runc
+├── etc/
+│   ├── daemon.json            Generated daemon config
+│   └── dockyard.env           Copy of the env file for this instance
+├── lib/
+│   ├── docker/                Docker data root (images, containers, volumes)
+│   │   └── containerd/        Containerd content store
+│   ├── sysbox/                sysbox-mgr data-root + sysbox-fs mountpoint
+│   └── docker-config/         DOCKER_CONFIG dir (auth, config.json)
+├── log/
+│   ├── dockerd.log
+│   ├── containerd.log
+│   ├── sysbox-mgr.log
+│   └── sysbox-fs.log
+└── run/                       All runtime sockets + PIDs in one place
+    ├── docker.sock            API socket (root:${PREFIX}docker 660)
+    ├── dockerd.pid
+    ├── containerd.pid
     ├── containerd/
     │   └── containerd.sock
-    └── dockerd.pid
+    └── sysbox/
+        ├── sysmgr.sock
+        ├── sysfs.sock
+        ├── sysbox-mgr.pid
+        └── sysbox-fs.pid
 
 /etc/systemd/system/
     └── ${PREFIX}docker.service    Per-instance docker service (no shared sysbox service)
@@ -379,17 +360,17 @@ All resources a dockyard instance owns on the host are namespaced under its `PRE
 | Linux bridge | `${PREFIX}docker0` | `dy1_docker0` |
 | System user | `${PREFIX}docker` | `dy1_docker` |
 | System group | `${PREFIX}docker` | `dy1_docker` |
-| Runtime tmpfs dir | `/run/${PREFIX}docker/` | `/run/dy1_docker/` |
-| Containerd state dir | `/run/${PREFIX}docker/containerd/` | `/run/dy1_docker/containerd/` |
 | Data root | `${DOCKYARD_ROOT}/` | `/dy1/` |
-| API socket | `${DOCKYARD_ROOT}/docker.sock` | `/dy1/docker.sock` |
-| Containerd socket | `/run/${PREFIX}docker/containerd/containerd.sock` | `/run/dy1_docker/containerd/containerd.sock` |
-| Runtime dir | `${DOCKYARD_ROOT}/docker-runtime/` | `/dy1/docker-runtime/` |
-| Binaries | `${DOCKYARD_ROOT}/docker-runtime/bin/` | `/dy1/docker-runtime/bin/` |
-| Config | `${DOCKYARD_ROOT}/docker-runtime/etc/` | `/dy1/docker-runtime/etc/` |
-| Logs | `${DOCKYARD_ROOT}/docker-runtime/log/` | `/dy1/docker-runtime/log/` |
-| Sysbox socket/PID dir | `${DOCKYARD_ROOT}/sysbox-run/` | `/dy1/sysbox-run/` |
-| Sysbox data dir | `${DOCKYARD_ROOT}/sysbox/` | `/dy1/sysbox/` |
+| Binaries | `${DOCKYARD_ROOT}/bin/` | `/dy1/bin/` |
+| Config + daemon.json | `${DOCKYARD_ROOT}/etc/` | `/dy1/etc/` |
+| Logs | `${DOCKYARD_ROOT}/log/` | `/dy1/log/` |
+| Docker data root | `${DOCKYARD_ROOT}/lib/docker/` | `/dy1/lib/docker/` |
+| Sysbox data dir | `${DOCKYARD_ROOT}/lib/sysbox/` | `/dy1/lib/sysbox/` |
+| Docker client config | `${DOCKYARD_ROOT}/lib/docker-config/` | `/dy1/lib/docker-config/` |
+| API socket | `${DOCKYARD_ROOT}/run/docker.sock` | `/dy1/run/docker.sock` |
+| dockerd PID file | `${DOCKYARD_ROOT}/run/dockerd.pid` | `/dy1/run/dockerd.pid` |
+| Containerd socket | `${DOCKYARD_ROOT}/run/containerd/containerd.sock` | `/dy1/run/containerd/containerd.sock` |
+| Sysbox socket/PID dir | `${DOCKYARD_ROOT}/run/sysbox/` | `/dy1/run/sysbox/` |
 | AppArmor override | `fusermount3` (tagged per-instance) | `/etc/apparmor.d/local/` |
 
 ### Resource Scope Diagram
@@ -405,19 +386,14 @@ dy1_docker0"]
 dy1_docker"]
         DR["Data root
 DOCKYARD_ROOT
-owns: docker.sock
-docker-runtime"]
-        RT["Runtime tmpfs
-run/dy1_docker
-containerd.sock"]
+bin/ etc/ lib/ log/ run/"]
         SBX["Sysbox pair
 sysbox-mgr + sysbox-fs
-sysbox-run/ + sysbox/"]
+run/sysbox/ + lib/sysbox/"]
     end
 
     SVC -->|"ExecStartPre starts"| SBX
     SVC -->|"manages"| BR
-    SVC -->|"creates"| RT
     UG -->|"owns socket in"| DR
     SBX -->|"sockets in"| DR
 ```
@@ -427,7 +403,7 @@ sysbox-run/ + sysbox/"]
 ```mermaid
 graph LR
     subgraph "Instance dy1_"
-        SOCK["docker.sock
+        SOCK["run/docker.sock
 root:dy1_docker  660"]
     end
 
@@ -443,13 +419,13 @@ usermod -aG dy1_docker alice"]
     OTHER -. "permission denied" .-> SOCK
 ```
 
-The separation between instances is strict: membership in `dy2_docker` conveys zero rights over `/dy1/docker.sock`.
+The separation between instances is strict: membership in `dy2_docker` conveys zero rights over `/dy1/run/docker.sock`.
 
 ---
 
 ## Test Suite
 
-The integration test suite (`cmd/dockyardtest/main.go`) runs 27 tests against a real Linux VM over SSH. It covers the full instance lifecycle including edge cases:
+The integration test suite (`cmd/dockyardtest/main.go`) runs 28 tests against a real Linux VM over SSH. It covers the full instance lifecycle including edge cases:
 
 | Phase | Tests | What is verified |
 |-------|-------|-----------------|
@@ -469,6 +445,7 @@ The integration test suite (`cmd/dockyardtest/main.go`) runs 27 tests against a 
 | Post-reboot health | 21–24 | Services, containers, networking, DinD — all on B+C |
 | Final teardown | 25–26 | Destroy B and C |
 | Full cleanup | 27 | No residual services, bridges, iptables, data dirs, users/groups |
+| Nested root | 28 | DOCKYARD_ROOT at a deeply nested path (e.g. `/tmp/a/b/c/dockyard`) — full lifecycle |
 
 Tests 05, 07–13, 19–24 run instance-level checks concurrently using goroutines. Results are sorted by instance label before printing to ensure deterministic output.
 
@@ -506,4 +483,4 @@ Dockyard achieves similar isolation at much lower overhead because sysbox handle
 
 containerd supports multiple namespaces natively. You could run one containerd with separate namespaces for different tenants. This loses the Docker API compatibility that most tooling expects and requires every operator to learn the containerd CLI and gRPC API.
 
-Dockyard preserves the Docker API surface entirely — `DOCKER_HOST=unix:///dy1/docker.sock docker ps` just works.
+Dockyard preserves the Docker API surface entirely — `DOCKER_HOST=unix:///dy1/run/docker.sock docker ps` just works.

@@ -11,11 +11,11 @@
 > A second intermediate design used a **single shared `dockyard-sysbox.service`**
 > per host (`Requires=` from each docker service). That too has been superseded.
 >
-> **Current architecture (2026-02-24)**: Per-instance sysbox using the
-> `github.com/thieso2/sysbox` fork (version `0.6.7.2-tc`), which adds
-> `--run-dir` to `sysbox-mgr`/`sysbox-fs` and `SYSBOX_RUN_DIR` env var support
-> in `sysbox-runc`. Each instance runs its own isolated sysbox pair. There is no
-> shared sysbox service and no ref-counting.
+> **Current architecture**: Per-instance sysbox using the
+> `github.com/thieso2/sysbox` fork (version `0.6.7.10-tc`), which adds
+> `--run-dir` to all three sysbox binaries. Each instance runs its own isolated
+> sysbox pair with `--run-dir` passed via `runtimeArgs` in `daemon.json`. No
+> wrapper script, no shared sysbox service, no ref-counting.
 >
 > See [ARCHITECTURE.md](ARCHITECTURE.md) for the current design and
 > [FINDINGS.md](FINDINGS.md) for the full root-cause analysis.
@@ -115,37 +115,25 @@ ${PREFIX}sysbox.service (manages bundled sysbox daemons)
 ${PREFIX}docker.service (manages containerd + dockerd)
 ```
 
-### Directory Structure (per instance)
+### Directory Structure (per instance, historical — superseded by FHS layout)
 ```
 ${DOCKYARD_ROOT}/
-├── docker/                  # Docker data
-├── sysbox/                  # Sysbox data (NEW)
-├── docker.sock
-└── docker-runtime/
-    ├── bin/
-    │   ├── sysbox-mgr       # Bundled
-    │   ├── sysbox-fs        # Bundled
-    │   ├── sysbox-runc      # Bundled
-    │   ├── dockerd
-    │   ├── containerd
-    │   └── ...
-    ├── etc/
-    ├── log/
-    │   ├── sysbox-mgr.log   # NEW
-    │   ├── sysbox-fs.log    # NEW
-    │   ├── containerd.log
-    │   └── dockerd.log
-    └── run/
-        ├── sysbox-mgr.pid   # NEW
-        ├── sysbox-fs.pid    # NEW
-        └── containerd.pid
-
-/run/${PREFIX}docker/
-└── dockerd.pid
+├── bin/                     # dockerd, containerd, sysbox-mgr, sysbox-fs, sysbox-runc, docker
+├── etc/                     # daemon.json, dockyard.env
+├── lib/
+│   ├── docker/              # Docker data
+│   ├── sysbox/              # Sysbox data-root + mountpoint
+│   └── docker-config/       # DOCKER_CONFIG
+├── log/                     # containerd.log, dockerd.log, sysbox-mgr.log, sysbox-fs.log
+└── run/
+    ├── docker.sock
+    ├── dockerd.pid
+    ├── containerd/
+    │   └── containerd.sock
+    └── sysbox/              # sysmgr.sock, sysfs.sock, sysbox-mgr.pid, sysbox-fs.pid
 
 /etc/systemd/system/
-├── ${PREFIX}sysbox.service  # NEW
-└── ${PREFIX}docker.service
+└── ${PREFIX}docker.service  # no shared sysbox service
 ```
 
 ## Testing
