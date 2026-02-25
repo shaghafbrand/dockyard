@@ -14,16 +14,20 @@ Dockyard spins up fully independent Docker instances that:
 - **Survive reboots** — systemd services with proper dependency ordering, automatic restart, and clean teardown
 - **Install in seconds** — one command generates config, another downloads Docker + sysbox binaries, generates a self-contained systemd service, and starts everything
 
+## Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/thieso2/dockyard/main/dist/dockyard.sh -o dockyard.sh
+chmod +x dockyard.sh
+```
+
 ## Quick Start
 
 ```bash
-# Download
-curl -O https://raw.githubusercontent.com/thieso2/dockyard/refs/heads/main/dockyard.sh && chmod +x dockyard.sh
-
 # Generate a config with randomized, conflict-free networks
 ./dockyard.sh gen-env
 
-# Create instance
+# Create instance (downloads Docker + sysbox binaries, sets up systemd)
 sudo ./dockyard.sh create
 
 # Run a container (uses sysbox-runc automatically)
