@@ -86,7 +86,7 @@ Because every rule references `${BRIDGE}` (e.g. `dy1_docker0`), instances are ma
 
 There is no flag to change them. Running two sysbox-mgr processes on the same host is physically impossible — they fight over the same socket file. An earlier architecture worked around this by using a single shared `dockyard-sysbox.service`, but that means all instances share one sysbox process.
 
-**The solution: fork sysbox.** The fork (`github.com/thieso2/sysbox`, version `0.6.7.10-tc`) adds `--run-dir <dir>` to all three sysbox binaries — `sysbox-mgr`, `sysbox-fs`, and `sysbox-runc`. `SetRunDir()` calls `os.Setenv("SYSBOX_RUN_DIR", dir)`, so passing `--run-dir` via `runtimeArgs` in `daemon.json` works correctly for all sockets including the seccomp tracer. No wrapper script is needed.
+**The solution: fork sysbox.** The fork (`github.com/thieso2/sysbox`, version `0.6.7.9-tc`) adds `--run-dir <dir>` to all three sysbox binaries — `sysbox-mgr`, `sysbox-fs`, and `sysbox-runc`. `SetRunDir()` calls `os.Setenv("SYSBOX_RUN_DIR", dir)`, so passing `--run-dir` via `runtimeArgs` in `daemon.json` works correctly for all sockets including the seccomp tracer. No wrapper script is needed.
 
 Each dockyard instance points its sysbox pair at its own directories (FHS layout):
 
@@ -118,7 +118,7 @@ Versions are pinned explicitly in `cmd_create()`:
 |--------|---------|--------|
 | Docker CE static | 29.2.1 | download.docker.com |
 | Docker Rootless Extras | 29.2.1 | download.docker.com |
-| Sysbox fork (static tarball) | 0.6.7.10-tc | github.com/thieso2/sysbox |
+| Sysbox fork (static tarball) | 0.6.7.9-tc | github.com/thieso2/sysbox |
 
 ---
 

@@ -12,7 +12,7 @@
 > per host (`Requires=` from each docker service). That too has been superseded.
 >
 > **Current architecture**: Per-instance sysbox using the
-> `github.com/thieso2/sysbox` fork (version `0.6.7.10-tc`), which adds
+> `github.com/thieso2/sysbox` fork (version `0.6.7.9-tc`), which adds
 > `--run-dir` to all three sysbox binaries. Each instance runs its own isolated
 > sysbox pair with `--run-dir` passed via `runtimeArgs` in `daemon.json`. No
 > wrapper script, no shared sysbox service, no ref-counting.

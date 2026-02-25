@@ -93,11 +93,11 @@ Defined in `cmd_create()`, cached in `.tmp/`:
 |----------|---------|--------|
 | Docker CE (static) | 29.2.1 | download.docker.com |
 | Docker Rootless Extras | 29.2.1 | download.docker.com |
-| Sysbox (fork, static tarball) | 0.6.7.10-tc | github.com/thieso2/sysbox |
+| Sysbox (fork, static tarball) | 0.6.7.9-tc | github.com/thieso2/sysbox |
 
 The fork ships as a static tarball containing all three binaries (`sysbox-mgr`, `sysbox-fs`, `sysbox-runc`).
 
-### Per-Instance Sysbox Daemon (0.6.7.10-tc fork)
+### Per-Instance Sysbox Daemon (0.6.7.9-tc fork)
 
 The patched fork (`github.com/thieso2/sysbox`) adds `--run-dir` to all three sysbox binaries, allowing N independent sysbox instances per host. `SetRunDir()` calls `os.Setenv("SYSBOX_RUN_DIR", dir)`, so `runtimeArgs: ["--run-dir", "..."]` in daemon.json works correctly. No wrapper script needed.
 

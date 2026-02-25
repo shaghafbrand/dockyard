@@ -129,7 +129,7 @@ The installer downloads static binaries (cached in `.tmp/` for repeated installs
 |----------|---------|----------|
 | [Docker CE](https://download.docker.com/linux/static/stable/x86_64/) | 29.2.1 | dockerd, containerd, docker, ctr, runc, etc. |
 | [Docker Rootless Extras](https://download.docker.com/linux/static/stable/x86_64/) | 29.2.1 | dockerd-rootless, vpnkit, rootlesskit, etc. |
-| [Sysbox fork](https://github.com/thieso2/sysbox) | 0.6.7.10-tc | sysbox-mgr, sysbox-fs, sysbox-runc (all per-instance) |
+| [Sysbox fork](https://github.com/thieso2/sysbox) | 0.6.7.9-tc | sysbox-mgr, sysbox-fs, sysbox-runc (all per-instance) |
 
 All three sysbox binaries are per-instance. There is no shared sysbox host daemon.
 
@@ -197,7 +197,7 @@ export DOCKER_HOST=unix:///dockyard/run/docker.sock
 
 Nestybox sysbox 0.6.7 CE hardcodes its socket paths (`/run/sysbox/sysmgr.sock`, `/run/sysbox/sysfs.sock`) with no flag to change them. Only one sysbox-mgr + sysbox-fs pair can run per host, which conflicts with the goal of fully independent per-instance isolation.
 
-The fork (`github.com/thieso2/sysbox`, version `0.6.7.10-tc`) adds `--run-dir <dir>` to all three sysbox binaries. Each dockyard instance points its sysbox pair at `${DOCKYARD_ROOT}/run/sysbox/`, giving N fully isolated sysbox instances on the same host. `--run-dir` is passed via `runtimeArgs` in `daemon.json` — no wrapper script needed.
+The fork (`github.com/thieso2/sysbox`, version `0.6.7.9-tc`) adds `--run-dir <dir>` to all three sysbox binaries. Each dockyard instance points its sysbox pair at `${DOCKYARD_ROOT}/run/sysbox/`, giving N fully isolated sysbox instances on the same host. `--run-dir` is passed via `runtimeArgs` in `daemon.json` — no wrapper script needed.
 
 ## Prerequisites
 

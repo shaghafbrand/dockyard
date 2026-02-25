@@ -4,7 +4,7 @@
 
 **Date**: 2026-02-23
 **Severity**: Architectural blocker for naive per-instance sysbox
-**Status**: RESOLVED — forked sysbox (0.6.7.10-tc)
+**Status**: RESOLVED — forked sysbox (0.6.7.9-tc)
 
 `sysbox-fs` and `sysbox-mgr` have NO flag to change their socket paths:
 - `/run/sysbox/sysfs.sock` — hardcoded in sysbox-fs
@@ -26,7 +26,7 @@ An intermediate architecture used a single shared `dockyard-sysbox.service` per 
 
 ### Final solution: Fork sysbox to add `--run-dir`
 
-The fork (`github.com/thieso2/sysbox`, version `0.6.7.10-tc`) adds `--run-dir <dir>` to all three sysbox binaries — `sysbox-mgr`, `sysbox-fs`, and `sysbox-runc`. Each dockyard instance now starts its own sysbox-mgr and sysbox-fs with a unique `--run-dir` pointing to `${DOCKYARD_ROOT}/run/sysbox/`. There is no shared sysbox service. `--run-dir` is passed via `runtimeArgs` in `daemon.json`; no wrapper script is needed.
+The fork (`github.com/thieso2/sysbox`, version `0.6.7.9-tc`) adds `--run-dir <dir>` to all three sysbox binaries — `sysbox-mgr`, `sysbox-fs`, and `sysbox-runc`. Each dockyard instance now starts its own sysbox-mgr and sysbox-fs with a unique `--run-dir` pointing to `${DOCKYARD_ROOT}/run/sysbox/`. There is no shared sysbox service. `--run-dir` is passed via `runtimeArgs` in `daemon.json`; no wrapper script is needed.
 
 ---
 
