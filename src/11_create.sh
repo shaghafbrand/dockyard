@@ -47,7 +47,6 @@ cmd_create() {
     #   Uses sysbox-runc as default runtime → the bundled runc 1.3.3 is never
     #   called for sandbox containers, so this version does NOT trigger the
     #   sysbox procfs incompatibility (nestybox/sysbox#973).
-    #   Minimum 29.x required for the DinD ownership watcher (commit 2deac51).
     #
     # SYSBOX_VERSION: 0.6.7.7-tc is a patched fork (github.com/thieso2/sysbox)
     #   that adds --run-dir to sysbox-mgr, sysbox-fs, and sysbox-runc, allowing
@@ -130,16 +129,22 @@ cmd_create() {
     download "$DOCKER_ROOTLESS_URL"
     download "$SYSBOX_URL"
 
+    # Use per-PID staging dirs for extraction so concurrent creates don't race
+    # on a shared extraction directory (all instances share the same CACHE_DIR).
+    local STAGING="${CACHE_DIR}/staging-$$"
+    mkdir -p "$STAGING"
+    trap 'rm -rf "$STAGING"' RETURN
+
     echo "Extracting Docker binaries..."
-    tar -xzf "${CACHE_DIR}/docker-${DOCKER_VERSION}.tgz" -C "$CACHE_DIR"
-    cp -f "${CACHE_DIR}/docker/"* "$BIN_DIR/"
+    tar -xzf "${CACHE_DIR}/docker-${DOCKER_VERSION}.tgz" -C "$STAGING"
+    cp -f "${STAGING}/docker/"* "$BIN_DIR/"
 
     echo "Extracting Docker rootless extras..."
-    tar -xzf "${CACHE_DIR}/docker-rootless-extras-${DOCKER_ROOTLESS_VERSION}.tgz" -C "$CACHE_DIR"
-    cp -f "${CACHE_DIR}/docker-rootless-extras/"* "$BIN_DIR/"
+    tar -xzf "${CACHE_DIR}/docker-rootless-extras-${DOCKER_ROOTLESS_VERSION}.tgz" -C "$STAGING"
+    cp -f "${STAGING}/docker-rootless-extras/"* "$BIN_DIR/"
 
     echo "Extracting sysbox static binaries..."
-    local SYSBOX_EXTRACT="${CACHE_DIR}/sysbox-static-${SYSBOX_VERSION}"
+    local SYSBOX_EXTRACT="${STAGING}/sysbox-static-${SYSBOX_VERSION}"
     mkdir -p "$SYSBOX_EXTRACT"
     tar -xzf "${CACHE_DIR}/${SYSBOX_TARBALL}" -C "$SYSBOX_EXTRACT"
     # All three sysbox binaries go directly to BIN_DIR.
