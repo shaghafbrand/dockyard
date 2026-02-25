@@ -49,19 +49,19 @@ cmd_create() {
     #   sysbox procfs incompatibility (nestybox/sysbox#973).
     #   Minimum 29.x required for the DinD ownership watcher (commit 2deac51).
     #
-    # SYSBOX_VERSION: 0.6.7.5-tc is a patched fork (github.com/thieso2/sysbox)
+    # SYSBOX_VERSION: 0.6.7.6-tc is a patched fork (github.com/thieso2/sysbox)
     #   that adds --run-dir to sysbox-mgr and sysbox-fs, allowing N independent
     #   sysbox instances per host (each with its own socket dir).
     #   NOTE: sysbox-runc --run-dir via runtimeArgs still does NOT redirect the
-    #   seccomp tracer socket (sysfs-seccomp.sock) — the path is fixed in init()
-    #   before app.Before fires. Workaround: install sysbox-runc as a wrapper
-    #   script that exports SYSBOX_RUN_DIR, then exec the real binary. The env
-    #   var is read in init() so all three sockets are redirected correctly.
+    #   seccomp tracer socket (sysfs-seccomp.sock). Workaround: install
+    #   sysbox-runc as a wrapper script that exports SYSBOX_RUN_DIR, then exec
+    #   the real binary. The env var is read in init() before any socket path
+    #   is fixed, so all three sockets are redirected correctly.
     #   Tracked: https://github.com/thieso2/sysbox/issues/4
     #   Distributed as a static tarball (no .deb, no dpkg dependency).
     local DOCKER_VERSION="29.2.1"
     local DOCKER_ROOTLESS_VERSION="29.2.1"
-    local SYSBOX_VERSION="0.6.7.5-tc"
+    local SYSBOX_VERSION="0.6.7.6-tc"
     local SYSBOX_TARBALL="sysbox-static-x86_64.tar.gz"
 
     local DOCKER_URL="https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_VERSION}.tgz"
@@ -147,8 +147,8 @@ cmd_create() {
     # sysbox-mgr and sysbox-fs go directly to BIN_DIR.
     # sysbox-runc is installed as sysbox-runc-bin; a wrapper script at sysbox-runc
     # exports SYSBOX_RUN_DIR so init() redirects ALL sockets (including sysfs-seccomp.sock).
-    # Using runtimeArgs ["--run-dir", ...] does NOT work: the CLI flag is processed in
-    # app.Before, after init() has already fixed the seccomp socket path. See issue #4.
+    # Using runtimeArgs ["--run-dir", ...] does NOT work: SetRunDir() is called in
+    # app.Before which fires after init() has already fixed the seccomp socket path.
     for bin in sysbox-runc sysbox-mgr sysbox-fs; do
         local src
         src=$(find "$SYSBOX_EXTRACT" -name "$bin" -type f | head -1)
@@ -192,7 +192,7 @@ DOCKEREOF
     echo "Installed binaries to ${BIN_DIR}/"
 
     # Write daemon.json (embedded — no external file dependency)
-    # No runtimeArgs for sysbox-runc: SYSBOX_RUN_DIR is set by the wrapper script.
+    # No runtimeArgs: SYSBOX_RUN_DIR is exported by the sysbox-runc wrapper script.
     cat > "${ETC_DIR}/daemon.json" <<DAEMONJSONEOF
 {
   "default-runtime": "sysbox-runc",

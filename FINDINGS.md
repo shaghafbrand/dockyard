@@ -105,9 +105,9 @@ Containers in instance A can reach instance B's bridge IP. This is expected Linu
 
 ---
 
-## sysbox-runc --run-dir CLI flag: seccomp socket not redirected (0.6.7.4-tc, 0.6.7.5-tc)
+## sysbox-runc --run-dir CLI flag: seccomp socket not redirected (0.6.7.4–0.6.7.6-tc)
 
-**Date**: 2026-02-24 (confirmed still broken in 0.6.7.5-tc: 2026-02-25)
+**Date**: 2026-02-24 (confirmed still broken in 0.6.7.5-tc and 0.6.7.6-tc: 2026-02-25)
 **Severity**: Containers fail to start when `--run-dir` is used via `runtimeArgs`
 **Status**: Open — tracked in https://github.com/thieso2/sysbox/issues/4
 
@@ -125,8 +125,9 @@ This error occurs even though `sysfs-seccomp.sock` **is** correctly created at t
 per-instance run-dir (e.g. `/dy1/sysbox-run/sysfs-seccomp.sock`). sysbox-runc ignores
 the relocated socket and still dials the hardcoded `/run/sysbox/sysfs-seccomp.sock`.
 
-Confirmed present in both 0.6.7.4-tc and 0.6.7.5-tc despite the `--run-dir` CLI flag
-being added to sysbox-runc in both releases.
+Confirmed present in 0.6.7.4-tc, 0.6.7.5-tc, and 0.6.7.6-tc despite the `--run-dir` CLI
+flag being added and iterated across these releases. The `SYSBOX_RUN_DIR` env var path
+(read directly in `init()`) still works correctly in all versions.
 
 ### Root cause: init() vs app.Before() timing
 
