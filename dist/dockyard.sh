@@ -449,17 +449,18 @@ cmd_create() {
     #   called for sandbox containers, so this version does NOT trigger the
     #   sysbox procfs incompatibility (nestybox/sysbox#973).
     #
-    # SYSBOX_VERSION: 0.6.7.7-tc is a patched fork (github.com/thieso2/sysbox)
+    # SYSBOX_VERSION: 0.6.7.10-tc is a patched fork (github.com/thieso2/sysbox)
     #   that adds --run-dir to sysbox-mgr, sysbox-fs, and sysbox-runc, allowing
     #   N independent sysbox instances per host (each with its own socket dir).
     #   SetRunDir() now calls os.Setenv("SYSBOX_RUN_DIR", dir), so the CLI flag
     #   --run-dir via runtimeArgs works correctly for all three sockets including
     #   the seccomp tracer (sysfs-seccomp.sock). No wrapper script needed.
+    #   Also fixes IDMappedMount vol ownership (issue #6, sysbox-mgr c9c8892).
     #   Fixed: https://github.com/thieso2/sysbox/issues/4
     #   Distributed as a static tarball (no .deb, no dpkg dependency).
     local DOCKER_VERSION="29.2.1"
     local DOCKER_ROOTLESS_VERSION="29.2.1"
-    local SYSBOX_VERSION="0.6.7.9-tc"
+    local SYSBOX_VERSION="0.6.7.10-tc"
     local SYSBOX_TARBALL="sysbox-static-x86_64.tar.gz"
 
     local DOCKER_URL="https://download.docker.com/linux/static/stable/x86_64/docker-${DOCKER_VERSION}.tgz"
