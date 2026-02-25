@@ -79,3 +79,53 @@ check_subnet_conflict() {
     fi
     return 0
 }
+
+# Cross-check proposed CIDRs against sibling dockyard env files in the given
+# directory.  Prevents gen-env for instance B from picking a pool range that
+# shares a /16 with instance A's bridge CIDR (and vice versa), which would
+# cause a conflict when concurrent creates bring A's bridge up before B's
+# check_subnet_conflict runs.
+check_sibling_conflict() {
+    local fixed_cidr="$1"
+    local pool_base="$2"
+    local env_dir="$3"
+
+    [ -d "$env_dir" ] || return 0
+
+    local our_bridge_two our_pool_two
+    our_bridge_two="${fixed_cidr%.*.*}"     # e.g. "172.21" from 172.21.116.0/24
+    our_pool_two="${pool_base%/*}"
+    our_pool_two="${our_pool_two%.*.*}"     # e.g. "172.21" from 172.21.0.0/16
+
+    for sibling in "${env_dir}"/*.env; do
+        [ -f "$sibling" ] || continue
+        local sib_fixed sib_pool
+        sib_fixed=$(grep '^DOCKYARD_FIXED_CIDR=' "$sibling" 2>/dev/null | cut -d= -f2) || true
+        sib_pool=$(grep '^DOCKYARD_POOL_BASE=' "$sibling" 2>/dev/null | cut -d= -f2) || true
+        [ -n "${sib_fixed}${sib_pool}" ] || continue
+
+        if [ -n "$sib_fixed" ]; then
+            local sib_two="${sib_fixed%.*.*}"
+            # Our pool must not share a /16 with a sibling's bridge
+            if [ "$our_pool_two" = "$sib_two" ]; then
+                echo "Error: DOCKYARD_POOL_BASE ${pool_base} would overlap with sibling bridge ${sib_fixed} (from ${sibling})" >&2
+                return 1
+            fi
+        fi
+        if [ -n "$sib_pool" ]; then
+            local sib_pool_two="${sib_pool%/*}"
+            sib_pool_two="${sib_pool_two%.*.*}"
+            # Our bridge must not share a /16 with a sibling's pool
+            if [ "$our_bridge_two" = "$sib_pool_two" ]; then
+                echo "Error: DOCKYARD_FIXED_CIDR ${fixed_cidr} would overlap with sibling pool ${sib_pool} (from ${sibling})" >&2
+                return 1
+            fi
+            # Our pool must not share a /16 with a sibling's pool
+            if [ "$our_pool_two" = "$sib_pool_two" ]; then
+                echo "Error: DOCKYARD_POOL_BASE ${pool_base} would overlap with sibling pool ${sib_pool} (from ${sibling})" >&2
+                return 1
+            fi
+        fi
+    done
+    return 0
+}

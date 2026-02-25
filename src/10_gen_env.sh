@@ -51,7 +51,10 @@ cmd_gen_env() {
                 break
             fi
 
-            if check_subnet_conflict "$fixed_cidr" "$pool_base" 2>/dev/null; then
+            local env_dir
+            env_dir="$(cd "$(dirname "${out_file}")" 2>/dev/null && pwd)" || env_dir=""
+            if check_subnet_conflict "$fixed_cidr" "$pool_base" 2>/dev/null && \
+               check_sibling_conflict "$fixed_cidr" "$pool_base" "$env_dir" 2>/dev/null; then
                 break
             fi
 
