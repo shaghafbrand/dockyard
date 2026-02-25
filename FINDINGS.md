@@ -105,9 +105,9 @@ Containers in instance A can reach instance B's bridge IP. This is expected Linu
 
 ---
 
-## sysbox-runc --run-dir CLI flag: seccomp socket not redirected (0.6.7.4–0.6.7.6-tc)
+## sysbox-runc --run-dir CLI flag: seccomp socket not redirected (0.6.7.4–0.6.7.7-tc)
 
-**Date**: 2026-02-24 (confirmed still broken in 0.6.7.5-tc and 0.6.7.6-tc: 2026-02-25)
+**Date**: 2026-02-24 (confirmed still broken in 0.6.7.5-tc, 0.6.7.6-tc, and 0.6.7.7-tc: 2026-02-25)
 **Severity**: Containers fail to start when `--run-dir` is used via `runtimeArgs`
 **Status**: Open — tracked in https://github.com/thieso2/sysbox/issues/4
 
@@ -125,15 +125,38 @@ This error occurs even though `sysfs-seccomp.sock` **is** correctly created at t
 per-instance run-dir (e.g. `/dy1/sysbox-run/sysfs-seccomp.sock`). sysbox-runc ignores
 the relocated socket and still dials the hardcoded `/run/sysbox/sysfs-seccomp.sock`.
 
-Confirmed present in 0.6.7.4-tc, 0.6.7.5-tc, and 0.6.7.6-tc despite the `--run-dir` CLI
-flag being added and iterated across these releases. The `SYSBOX_RUN_DIR` env var path
-(read directly in `init()`) still works correctly in all versions.
+Confirmed present in 0.6.7.4-tc through 0.6.7.7-tc. The `SYSBOX_RUN_DIR` env var path
+(read directly in `init()`) works correctly in all versions.
 
-### Root cause: init() vs app.Before() timing
+### Confirmed call path via strace + binary wrapper
 
-`sysbox-runc` processes `--run-dir` in `app.Before`, which fires after all `init()` functions have run. The `sysfs-seccomp.sock` path is computed at init time from the default `runDir = "/run/sysbox"` and is not updated when `SetRunDir` is later called from `app.Before`.
+Instrumented with a debug wrapper at the sysbox-runc binary path. Confirmed:
 
-`SYSBOX_RUN_DIR` env var works correctly because `sysbox.go`'s `init()` calls `SetRunDir()` before any socket path is fixed — so all three sockets (sysmgr, sysfs, sysfs-seccomp) pick up the correct directory.
+1. containerd calls `sysbox-runc` directly (not via Docker-generated shim) with:
+   `--run-dir /dy1/sysbox-run ... create --bundle ...`
+2. `SYSBOX_RUN_DIR` is **not set** in containerd's environment
+3. `sysbox.go init()` runs → reads unset `SYSBOX_RUN_DIR` → `runDir = "/run/sysbox"`
+4. `app.Before()` calls `sysbox.SetRunDir(context.GlobalString("run-dir"))`
+5. Despite `--run-dir /dy1/sysbox-run` in argv, `context.GlobalString("run-dir")` returns
+   the default `/run/sysbox` — urfave/cli v1 bug with global flags before subcommands
+6. `SetRunDir("/run/sysbox")` is a no-op (same as default)
+7. `SendSeccompInit` dials `/run/sysbox/sysfs-seccomp.sock` → fails
+
+Adding `export SYSBOX_RUN_DIR=/dy1/sysbox-run` to the wrapper env makes it work instantly —
+confirming the env var path through `init()` is the only reliable mechanism.
+
+### Root cause: urfave/cli v1 GlobalString in app.Before
+
+`context.GlobalString("run-dir")` in `app.Before` does not return the CLI-provided value
+`/dy1/sysbox-run`. It returns the flag default `/run/sysbox`. This is a known urfave/cli v1
+quirk where global flags passed before a subcommand may not be visible to `app.Before`'s
+root context via `GlobalString`.
+
+The 0.6.7.7-tc fix (`os.Setenv("SYSBOX_RUN_DIR", dir)` in `SetRunDir`) does not help
+because `SetRunDir` is called with the wrong value (the default).
+
+`SYSBOX_RUN_DIR` env var works correctly because `sysbox.go`'s `init()` reads it before
+`app.Before` runs — so `runDir` is set to the correct per-instance path from the start.
 
 ### Workaround (current dockyard approach)
 
@@ -149,7 +172,7 @@ daemon.json points to the wrapper with no `runtimeArgs`.
 
 ### Fix needed
 
-`SetRunDir()` (or the seccomp socket path construction) must also update `sysfs-seccomp.sock` to use the provided dir, not the initial `/run/sysbox` default. Alternatively, `--run-dir` processing should move from `app.Before` to an `init()` function so it fires before any socket path is fixed.
+The `--run-dir` flag must use `context.String("run-dir")` instead of `context.GlobalString("run-dir")` in `app.Before`, OR the flag must be registered on each subcommand (not just `app.Flags`). Alternatively, parse the flag value directly from `os.Args` before `app.Before` and call `os.Setenv("SYSBOX_RUN_DIR", val)` early, so `init()` gets the correct value.
 
 ---
 
