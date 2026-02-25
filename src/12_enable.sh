@@ -53,12 +53,6 @@ ExecStartPre=/bin/bash -c '${BIN_DIR}/containerd --root ${DOCKER_DATA}/container
 # Start dockerd
 ExecStart=/bin/bash -c '${BIN_DIR}/dockerd --config-file ${ETC_DIR}/daemon.json --containerd ${CONTAINERD_SOCKET} --data-root ${DOCKER_DATA} --exec-root ${EXEC_ROOT} --pidfile ${EXEC_ROOT}/dockerd.pid --bridge ${BRIDGE} --fixed-cidr ${DOCKYARD_FIXED_CIDR} --default-address-pool base=${DOCKYARD_POOL_BASE},size=${DOCKYARD_POOL_SIZE} --host unix://${DOCKER_SOCKET} --iptables=false --group ${INSTANCE_GROUP} &>${LOG_DIR}/dockerd.log & i=0; while [ ! -e ${DOCKER_SOCKET} ]; do sleep 1; i=\$((i+1)); if [ \$i -ge 30 ]; then echo "dockerd did not start within 30s" >&2; exit 1; fi; done'
 
-# Start DinD ownership watcher (fixes sysbox uid mapping for Docker 29+)
-ExecStartPost=/bin/bash -c 'SYSBOX_UID_OFFSET=\$(awk -F: '"'"'\$1=="sysbox"{print \$2;exit}'"'"' /etc/subuid 2>/dev/null || echo 231072); SYSBOX_DOCKER_DIR=${SYSBOX_DATA_DIR}/docker; mkdir -p "\$SYSBOX_DOCKER_DIR"; find "\$SYSBOX_DOCKER_DIR" -maxdepth 1 -mindepth 1 -uid 0 -exec chown "\${SYSBOX_UID_OFFSET}:\${SYSBOX_UID_OFFSET}" {} \; 2>/dev/null || true; (while true; do for d in "\$SYSBOX_DOCKER_DIR"/*/; do [ -d "\$d" ] || continue; uid=\$(stat -c "%u" "\$d" 2>/dev/null) || continue; [ "\$uid" = "0" ] && chown "\${SYSBOX_UID_OFFSET}:\${SYSBOX_UID_OFFSET}" "\$d" 2>/dev/null; done; sleep 1; done) & echo \$! > ${RUN_DIR}/dind-watcher.pid'
-
-# Kill DinD watcher on stop
-ExecStopPost=-/bin/bash -c 'kill \$(cat ${RUN_DIR}/dind-watcher.pid 2>/dev/null) 2>/dev/null || true; rm -f ${RUN_DIR}/dind-watcher.pid'
-
 # Stop containerd
 ExecStopPost=-/bin/bash -c 'if [ -f ${RUN_DIR}/containerd.pid ]; then kill \$(cat ${RUN_DIR}/containerd.pid) 2>/dev/null; rm -f ${RUN_DIR}/containerd.pid; fi'
 

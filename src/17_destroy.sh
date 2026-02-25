@@ -32,11 +32,6 @@ cmd_destroy() {
         cmd_disable
     else
         # No systemd service — stop daemons directly
-        # Kill DinD watcher
-        if [ -f "${RUN_DIR}/dind-watcher.pid" ]; then
-            kill "$(cat "${RUN_DIR}/dind-watcher.pid")" 2>/dev/null || true
-            rm -f "${RUN_DIR}/dind-watcher.pid"
-        fi
         for pidfile in "${EXEC_ROOT}/dockerd.pid" "${RUN_DIR}/containerd.pid"; do
             if [ -f "$pidfile" ]; then
                 local pid
