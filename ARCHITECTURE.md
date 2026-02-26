@@ -313,7 +313,8 @@ This constraint is sysbox upstream issue #1756 and is tracked in `FINDINGS.md`.
 ```
 ${DOCKYARD_ROOT}/
 ├── bin/                       dockerd, containerd, docker-cli,
-│                              docker (DOCKER_HOST wrapper), dockyardctl,
+│                              docker (DOCKER_HOST wrapper), dockyard.sh,
+│                              dockyardctl (symlink → dockyard.sh),
 │                              sysbox-mgr, sysbox-fs, sysbox-runc
 ├── etc/
 │   ├── daemon.json            Generated daemon config

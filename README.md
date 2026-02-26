@@ -137,7 +137,7 @@ All three sysbox binaries are per-instance. There is no shared sysbox host daemo
 ```
 ${DOCKYARD_ROOT}/                       # owned by ${PREFIX}docker user/group
 ├── bin/                                # dockerd, containerd, sysbox-mgr, sysbox-fs,
-│                                       # sysbox-runc, docker (DOCKER_HOST wrapper), dockyardctl
+│                                       # sysbox-runc, docker (DOCKER_HOST wrapper), dockyard.sh, dockyardctl→dockyard.sh
 ├── etc/
 │   ├── daemon.json                     # Daemon configuration
 │   └── dockyard.env                    # Copy of config (written by create)

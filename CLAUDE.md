@@ -152,7 +152,7 @@ Each rule uses `-i $BRIDGE` or `-o $BRIDGE` so instances can never interfere wit
 ```
 ${DOCKYARD_ROOT}/                        # owned by ${INSTANCE_USER}:${INSTANCE_GROUP}
 ├── bin/                                 # dockerd, containerd, sysbox-mgr, sysbox-fs,
-│                                        # sysbox-runc, docker-cli, docker (wrapper), dockyardctl
+│                                        # sysbox-runc, docker-cli, docker (wrapper), dockyard.sh (dockyardctl symlink)
 ├── etc/
 │   ├── daemon.json                      # Docker daemon config
 │   └── dockyard.env                     # Copy of config (written by create)

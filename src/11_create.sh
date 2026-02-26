@@ -201,12 +201,16 @@ DOCKEREOF
 DAEMONJSONEOF
     echo "Installed config to ${ETC_DIR}/daemon.json"
 
-    # Copy config file and dockyardctl into instance
+    # Copy config file and dockyard.sh into instance.
+    # Installing as dockyard.sh means the script's own ../etc/dockyard.env
+    # auto-discovery works: ${BIN_DIR}/dockyard.sh finds ${ETC_DIR}/dockyard.env
+    # without needing DOCKYARD_ENV to be set.
     cp "$LOADED_ENV_FILE" "${ETC_DIR}/dockyard.env"
-    cp "${SCRIPT_DIR}/dockyard.sh" "${BIN_DIR}/dockyardctl"
-    chmod +x "${BIN_DIR}/dockyardctl"
+    cp "${SCRIPT_DIR}/dockyard.sh" "${BIN_DIR}/dockyard.sh"
+    chmod +x "${BIN_DIR}/dockyard.sh"
+    ln -sf dockyard.sh "${BIN_DIR}/dockyardctl"
     echo "Installed env to ${ETC_DIR}/dockyard.env"
-    echo "Installed dockyardctl to ${BIN_DIR}/dockyardctl"
+    echo "Installed dockyard.sh to ${BIN_DIR}/dockyard.sh"
 
     # Set ownership of the instance root so every file is attributed to the
     # instance user/group. dockerd still runs as root, so it can write freely;
@@ -240,6 +244,7 @@ DAEMONJSONEOF
     echo "  ${BIN_DIR}/docker run -ti alpine ash"
     echo ""
     echo "Manage this instance:"
-    echo "  ${BIN_DIR}/dockyardctl status"
-    echo "  sudo ${BIN_DIR}/dockyardctl destroy"
+    echo "  ${BIN_DIR}/dockyard.sh status"
+    echo "  sudo ${BIN_DIR}/dockyard.sh verify"
+    echo "  sudo ${BIN_DIR}/dockyard.sh destroy"
 }
