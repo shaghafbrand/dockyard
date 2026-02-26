@@ -220,7 +220,7 @@ mount("", "/", "", MS_PRIVATE | MS_REC, "")
 
 This attempts to change the root mount's propagation to private from within a new user+mount namespace. On **kernel 6.17** (Ubuntu 25.10+), inherited mounts owned by the parent user namespace cannot have their propagation changed from a child user namespace — the kernel returns `EPERM`.
 
-This restriction was tightened in the upstream kernel. Mainline `runc` ≥ 1.2 handles it gracefully; sysbox-runc 0.6.7.x does not.
+This restriction was tightened in a patch carried by Ubuntu's 6.17 kernel. **Mainline 6.17, 6.18, 6.16 are all confirmed working** — the break is specific to Ubuntu 25.10's `6.17.0-14-generic` build. Mainline `runc` ≥ 1.2 handles the `EPERM` gracefully regardless; sysbox-runc 0.6.7.x does not.
 
 **Confirmed not fixable by**:
 - `--privileged` — nsexec runs before privilege escalation is meaningful here
@@ -230,17 +230,23 @@ This restriction was tightened in the upstream kernel. Mainline `runc` ≥ 1.2 h
 
 ### Affected environments
 
-| Distro | Kernel | Status |
-|--------|--------|--------|
-| Ubuntu 25.10 | 6.17 | ❌ broken |
-| mainline | 6.16 | ✅ confirmed working |
-| Ubuntu 25.04 | 6.14 | ✅ confirmed working |
-| Ubuntu 24.04 LTS | 6.8 | ✅ confirmed working |
-| Ubuntu 22.04 LTS | 5.15 | ✅ expected working |
+| Kernel build | Status |
+|---|---|
+| Ubuntu 25.10 `6.17.0-14-generic` | ❌ broken |
+| mainline `6.17.0-061700-generic` | ✅ confirmed working |
+| mainline `6.18.0-061800-generic` | ✅ confirmed working |
+| mainline `6.16.0-061600-generic` | ✅ confirmed working |
+| Ubuntu 25.04 `6.14.0-37-generic` | ✅ confirmed working |
+| Ubuntu 24.04 LTS `6.8.x-generic` | ✅ confirmed working |
+| Ubuntu 22.04 LTS `5.15.x-generic` | ✅ expected working |
+
+The Ubuntu 25.10 kernel carries an Ubuntu-specific patch that tightens user-namespace mount propagation rules. The same kernel version from the mainline archive does not have this restriction.
 
 ### Fix
 
-Requires patching `nsexec.c` in sysbox-runc to handle `EPERM` on the `mount --make-private` call gracefully (or skip it when running in a user namespace where the mount is owned by the parent). No patch is available in 0.6.7.x as of 2026-02-25.
+Two options:
+1. **Replace kernel**: Install mainline 6.17 or 6.18 (`kernel.ubuntu.com/mainline`) instead of Ubuntu's 6.17 build.
+2. **Patch sysbox-runc**: Update `nsexec.c` to handle `EPERM` on the `mount --make-private` call gracefully. No such patch is available in 0.6.7.x as of 2026-02-26.
 
 ---
 
