@@ -106,6 +106,7 @@ Results are sorted by instance label before printing.
 ## Completed
 
 - [x] All 28 tests pass on target VM (100.106.185.92)
+- [x] 28/28 tests pass on mainline kernel 6.18.0-061800-generic (Ubuntu 25.04, incus VM on sandman)
 - [x] Per-test timing output
 - [x] Per-instance sysbox via 0.6.7.9-tc fork
 - [x] sysbox-runc --run-dir via runtimeArgs (no wrapper script)

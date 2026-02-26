@@ -247,11 +247,11 @@ func cleanupAllInstances(client *ssh.Client) {
 		run(client, fmt.Sprintf("rm -f %s 2>/dev/null; true", inst.EnvFile))
 	}
 	// Clean up nested-root test instance (test 28)
-	run(client, "[ -f ~/dyn.env ] && DOCKYARD_ENV=~/dyn.env sudo -E ~/dockyard.sh destroy --yes 2>/dev/null; true")
-	run(client, "sudo rm -rf /tmp/dockyard-nested 2>/dev/null; true")
+	run(client, "[ -f ~/dockyard-nested-test/dyn.env ] && DOCKYARD_ENV=~/dockyard-nested-test/dyn.env sudo -E ~/dockyard.sh destroy --yes 2>/dev/null; true")
+	run(client, "sudo rm -rf /var/tmp/dockyard-nested 2>/dev/null; true")
 	run(client, "sudo systemctl stop dyn_docker 2>/dev/null; sudo systemctl disable dyn_docker 2>/dev/null; true")
 	run(client, "sudo rm -f /etc/systemd/system/dyn_docker.service 2>/dev/null; true")
-	run(client, "rm -f ~/dyn.env 2>/dev/null; true")
+	run(client, "rm -rf ~/dockyard-nested-test 2>/dev/null; true")
 	run(client, "sudo systemctl daemon-reload 2>/dev/null; true")
 }
 
@@ -875,15 +875,15 @@ func runTests(client *ssh.Client, host, user, keyPath string) {
 	// Verifies the FHS layout works when DOCKYARD_ROOT is several levels deep.
 	{
 		start := time.Now()
-		nestedRoot := "/tmp/dockyard-nested/level1/level2/dockyard"
+		nestedRoot := "/var/tmp/dockyard-nested/level1/level2/dockyard"
 		nestedPrefix := "dyn_"
-		nestedEnv := "~/dyn.env"
+		nestedEnv := "~/dockyard-nested-test/dyn.env"
 		nestedSocket := nestedRoot + "/run/docker.sock"
 
 		// Pre-cleanup in case a previous run left state
 		run(client, fmt.Sprintf("DOCKYARD_ENV=%s sudo -E ~/dockyard.sh destroy --yes 2>/dev/null; true", nestedEnv))
-		run(client, fmt.Sprintf("sudo rm -rf /tmp/dockyard-nested 2>/dev/null; true"))
-		run(client, fmt.Sprintf("rm -f %s 2>/dev/null; true", nestedEnv))
+		run(client, fmt.Sprintf("sudo rm -rf /var/tmp/dockyard-nested 2>/dev/null; true"))
+		run(client, "rm -rf ~/dockyard-nested-test 2>/dev/null; true")
 		run(client, fmt.Sprintf("sudo systemctl stop %sdocker 2>/dev/null; sudo systemctl disable %sdocker 2>/dev/null; true", nestedPrefix, nestedPrefix))
 		run(client, fmt.Sprintf("sudo rm -f /etc/systemd/system/%sdocker.service 2>/dev/null; true", nestedPrefix))
 		run(client, "sudo systemctl daemon-reload 2>/dev/null; true")
@@ -891,6 +891,7 @@ func runTests(client *ssh.Client, host, user, keyPath string) {
 		nestedOK := true
 		var nestedMsg string
 
+		run(client, "mkdir -p ~/dockyard-nested-test")
 		_, se, code := run(client, fmt.Sprintf(
 			"DOCKYARD_ENV=%s DOCKYARD_ROOT=%s DOCKYARD_DOCKER_PREFIX=%s ~/dockyard.sh gen-env",
 			nestedEnv, nestedRoot, nestedPrefix,
@@ -930,8 +931,8 @@ func runTests(client *ssh.Client, host, user, keyPath string) {
 
 		// Always clean up, even on failure
 		run(client, fmt.Sprintf("DOCKYARD_ENV=%s sudo -E ~/dockyard.sh destroy --yes 2>/dev/null; true", nestedEnv))
-		run(client, "sudo rm -rf /tmp/dockyard-nested 2>/dev/null; true")
-		run(client, fmt.Sprintf("rm -f %s 2>/dev/null; true", nestedEnv))
+		run(client, "sudo rm -rf /var/tmp/dockyard-nested 2>/dev/null; true")
+		run(client, "rm -rf ~/dockyard-nested-test 2>/dev/null; true")
 
 		d := time.Since(start)
 		if nestedOK {
