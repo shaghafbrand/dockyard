@@ -233,7 +233,7 @@ func fail(num int, name, msg string, d time.Duration) {
 func cleanupAllInstances(client *ssh.Client) {
 	for _, inst := range allInstances {
 		run(client, fmt.Sprintf(
-			"[ -f %s ] && DOCKYARD_ENV=%s sudo -E ~/dockyard.sh destroy --yes 2>/dev/null; true",
+			"[ -f %s ] && sudo env DOCKYARD_ENV=%s ~/dockyard.sh destroy --yes 2>/dev/null; true",
 			inst.EnvFile, inst.EnvFile,
 		))
 		run(client, fmt.Sprintf("sudo rm -rf /run/%sdocker 2>/dev/null; true", inst.Prefix)) // legacy cleanup
@@ -247,7 +247,7 @@ func cleanupAllInstances(client *ssh.Client) {
 		run(client, fmt.Sprintf("rm -f %s 2>/dev/null; true", inst.EnvFile))
 	}
 	// Clean up nested-root test instance (test 28)
-	run(client, "[ -f ~/dockyard-nested-test/dyn.env ] && DOCKYARD_ENV=~/dockyard-nested-test/dyn.env sudo -E ~/dockyard.sh destroy --yes 2>/dev/null; true")
+	run(client, "[ -f ~/dockyard-nested-test/dyn.env ] && sudo env DOCKYARD_ENV=~/dockyard-nested-test/dyn.env ~/dockyard.sh destroy --yes 2>/dev/null; true")
 	run(client, "sudo rm -rf /var/tmp/dockyard-nested 2>/dev/null; true")
 	run(client, "sudo systemctl stop dyn_docker 2>/dev/null; sudo systemctl disable dyn_docker 2>/dev/null; true")
 	run(client, "sudo rm -f /etc/systemd/system/dyn_docker.service 2>/dev/null; true")
@@ -311,7 +311,7 @@ func runTests(client *ssh.Client, host, user, keyPath string) {
 			idx, inst := idx, inst
 			go func() {
 				time.Sleep(time.Duration(idx) * 3 * time.Second)
-				_, se, c := run(client, fmt.Sprintf("DOCKYARD_ENV=%s sudo -E ~/dockyard.sh create", inst.EnvFile))
+				_, se, c := run(client, fmt.Sprintf("sudo env DOCKYARD_ENV=%s ~/dockyard.sh create", inst.EnvFile))
 				createCh <- createRes{inst, c == 0, se}
 			}()
 		}
@@ -507,7 +507,7 @@ func runTests(client *ssh.Client, host, user, keyPath string) {
 		}
 	}
 
-	// Cleanup DinD containers before edge-case and destroy phases
+	// Cleanup DinD containers before verify and edge-case phases
 	for _, inst := range allInstances {
 		inst := inst
 		cname := "dind-" + strings.ToLower(inst.Label)
@@ -515,40 +515,69 @@ func runTests(client *ssh.Client, host, user, keyPath string) {
 	}
 
 	//
-	// ── Phase 8: Edge-case tests ──────────────────────────────────────────────
+	// ── Phase 8: Verify subcommand ────────────────────────────────────────────
 	//
 
-	// 14 — stop/start cycle on instance A
+	// 14 — all instances: verify subcommand passes end-to-end (concurrent)
+	// Runs dockyard.sh verify on each instance; internally exercises service,
+	// socket, docker info, container run, outbound networking, and DinD.
+	{
+		start := time.Now()
+		rs = forAll(client, allInstances, func(c *ssh.Client, inst Instance) (bool, string) {
+			out, se, code := run(c, fmt.Sprintf(
+				"DOCKYARD_ENV=%s sudo -E ~/dockyard.sh verify", inst.EnvFile,
+			))
+			if code != 0 {
+				return false, se
+			}
+			if !strings.Contains(out, "All 6 checks passed.") {
+				return false, "unexpected output: " + out
+			}
+			return true, ""
+		})
+		d := time.Since(start)
+		if allOK(rs) {
+			pass(14, "all instances: verify passes (6/6 checks)", d)
+		} else {
+			fail(14, "all instances: verify", failMsgs(rs), d)
+		}
+	}
+
+	//
+	// ── Phase 9: Edge-case tests ──────────────────────────────────────────────
+	//
+
+	// 15 — stop/start cycle on instance A
 	// Validates ExecStartPre/ExecStopPost iptables lifecycle and clean daemon restart.
 	{
 		start := time.Now()
 		inst := allInstances[0]
 		_, se, code := run(client, "sudo systemctl stop "+inst.Prefix+"docker")
 		if code != 0 {
-			fail(14, "stop/start cycle", "stop failed: "+se, time.Since(start))
+			fail(15, "stop/start cycle", "stop failed: "+se, time.Since(start))
 		} else {
 			_, _, isActive := run(client, "systemctl is-active "+inst.Prefix+"docker")
 			if isActive == 0 {
-				fail(14, "stop/start cycle", "service still active after stop", time.Since(start))
+				fail(15, "stop/start cycle", "service still active after stop", time.Since(start))
 			} else {
 				_, se2, c2 := run(client, "sudo systemctl start "+inst.Prefix+"docker")
 				if c2 != 0 {
-					fail(14, "stop/start cycle", "start failed: "+se2, time.Since(start))
+					fail(15, "stop/start cycle", "start failed: "+se2, time.Since(start))
 				} else {
 					out, se3, c3 := run(client, fmt.Sprintf(
 						"sudo DOCKER_HOST=unix://%s docker run --rm alpine echo cycled", inst.Socket,
 					))
 					if c3 != 0 || !strings.Contains(out, "cycled") {
-						fail(14, "stop/start cycle", "container after restart: "+se3, time.Since(start))
+						fail(15, "stop/start cycle", "container after restart: "+se3, time.Since(start))
 					} else {
-						pass(14, "stop/start cycle (stop → start → container run)", time.Since(start))
+						pass(15, "stop/start cycle (stop → start → container run)", time.Since(start))
 					}
 				}
 			}
 		}
 	}
 
-	// 15 — socket permissions: not world-accessible + owned by instance group
+	// 16 — socket permissions: not world-accessible + owned by instance group
 	// The docker socket must never be world-accessible, and must be owned by the
 	// per-instance group (${PREFIX}docker) so group members can access it without sudo.
 	{
@@ -576,17 +605,17 @@ func runTests(client *ssh.Client, host, user, keyPath string) {
 		})
 		d := time.Since(start)
 		if allOK(rs) {
-			pass(15, "socket permissions (not world-accessible, group-owned by instance)", d)
+			pass(16, "socket permissions (not world-accessible, group-owned by instance)", d)
 		} else {
-			fail(15, "socket permissions", failMsgs(rs), d)
+			fail(16, "socket permissions", failMsgs(rs), d)
 		}
 	}
 
 	//
-	// ── Phase 9: Destroy instance A, verify B+C unaffected ───────────────────
+	// ── Phase 10: Destroy instance A, verify B+C unaffected ──────────────────
 	//
 
-	// 16 — destroy A under load (running container must not block destroy)
+	// 17 — destroy A under load (running container must not block destroy)
 	{
 		start := time.Now()
 		inst := allInstances[0]
@@ -594,30 +623,30 @@ func runTests(client *ssh.Client, host, user, keyPath string) {
 			"sudo DOCKER_HOST=unix://%s docker run -d --name load-test alpine sleep 300 2>/dev/null",
 			inst.Socket,
 		))
-		_, se, code := run(client, fmt.Sprintf("DOCKYARD_ENV=%s sudo -E ~/dockyard.sh destroy --yes", inst.EnvFile))
+		_, se, code := run(client, fmt.Sprintf("sudo env DOCKYARD_ENV=%s ~/dockyard.sh destroy --yes", inst.EnvFile))
 		d := time.Since(start)
 		if code != 0 {
-			fail(16, "destroy under load", se, d)
+			fail(17, "destroy under load", se, d)
 		} else {
-			pass(16, "destroy under load (running container present at destroy time)", d)
+			pass(17, "destroy under load (running container present at destroy time)", d)
 		}
 	}
 
-	// 17 — double destroy idempotency (A already gone, second call must succeed)
+	// 18 — double destroy idempotency (A already gone, second call must succeed)
 	{
 		start := time.Now()
 		_, se, code := run(client, fmt.Sprintf(
-			"DOCKYARD_ENV=%s sudo -E ~/dockyard.sh destroy --yes", allInstances[0].EnvFile,
+			"sudo env DOCKYARD_ENV=%s ~/dockyard.sh destroy --yes", allInstances[0].EnvFile,
 		))
 		d := time.Since(start)
 		if code != 0 {
-			fail(17, "double destroy idempotency", se, d)
+			fail(18, "double destroy idempotency", se, d)
 		} else {
-			pass(17, "double destroy idempotency (second destroy is a no-op)", d)
+			pass(18, "double destroy idempotency (second destroy is a no-op)", d)
 		}
 	}
 
-	// 18 — A: service gone, bridge gone, iptables clean
+	// 19 — A: service gone, bridge gone, iptables clean
 	{
 		start := time.Now()
 		aClean := true
@@ -640,13 +669,13 @@ func runTests(client *ssh.Client, host, user, keyPath string) {
 		}
 		d := time.Since(start)
 		if aClean {
-			pass(18, "A: fully cleaned up (service+bridge+iptables)", d)
+			pass(19, "A: fully cleaned up (service+bridge+iptables)", d)
 		} else {
-			fail(18, "A: fully cleaned up", strings.Join(aCleanMsgs, ", "), d)
+			fail(19, "A: fully cleaned up", strings.Join(aCleanMsgs, ", "), d)
 		}
 	}
 
-	// 19 — B+C: still healthy after A destroy (container + ping)
+	// 20 — B+C: still healthy after A destroy (container + ping)
 	surviving := allInstances[1:]
 	{
 		start := time.Now()
@@ -659,17 +688,17 @@ func runTests(client *ssh.Client, host, user, keyPath string) {
 		})
 		d := time.Since(start)
 		if allOK(rs) {
-			pass(19, "B+C: still healthy after A destroy", d)
+			pass(20, "B+C: still healthy after A destroy", d)
 		} else {
-			fail(19, "B+C: still healthy after A destroy", failMsgs(rs), d)
+			fail(20, "B+C: still healthy after A destroy", failMsgs(rs), d)
 		}
 	}
 
 	//
-	// ── Phase 10: Reboot — all surviving instances must come back ─────────────
+	// ── Phase 11: Reboot — all surviving instances must come back ─────────────
 	//
 
-	// 20 — reboot
+	// 21 — reboot
 	{
 		start := time.Now()
 		fmt.Println("[INFO] Rebooting host...")
@@ -679,7 +708,7 @@ func runTests(client *ssh.Client, host, user, keyPath string) {
 
 		fmt.Println("[INFO] Waiting for SSH (up to 4min)...")
 		if err := waitForSSH(host, 4*time.Minute); err != nil {
-			fail(20, "reboot", err.Error(), time.Since(start))
+			fail(21, "reboot", err.Error(), time.Since(start))
 			return
 		}
 		// Give systemd a few seconds to finish starting services
@@ -688,13 +717,13 @@ func runTests(client *ssh.Client, host, user, keyPath string) {
 		var reconnErr error
 		client, reconnErr = dialSSH(host, user, keyPath)
 		if reconnErr != nil {
-			fail(20, "reboot", "could not reconnect: "+reconnErr.Error(), time.Since(start))
+			fail(21, "reboot", "could not reconnect: "+reconnErr.Error(), time.Since(start))
 			return
 		}
-		pass(20, "reboot", time.Since(start))
+		pass(21, "reboot", time.Since(start))
 	}
 
-	// 21 — post-reboot: B+C docker services active (concurrent)
+	// 22 — post-reboot: B+C docker services active (concurrent)
 	{
 		start := time.Now()
 		rs = forAll(client, surviving, func(c *ssh.Client, inst Instance) (bool, string) {
@@ -706,13 +735,13 @@ func runTests(client *ssh.Client, host, user, keyPath string) {
 		})
 		d := time.Since(start)
 		if allOK(rs) {
-			pass(21, "post-reboot: B+C services active", d)
+			pass(22, "post-reboot: B+C services active", d)
 		} else {
-			fail(21, "post-reboot: B+C services active", failMsgs(rs), d)
+			fail(22, "post-reboot: B+C services active", failMsgs(rs), d)
 		}
 	}
 
-	// 22 — post-reboot: B+C containers run (concurrent)
+	// 23 — post-reboot: B+C containers run (concurrent)
 	{
 		start := time.Now()
 		rs = forAll(client, surviving, func(c *ssh.Client, inst Instance) (bool, string) {
@@ -724,13 +753,13 @@ func runTests(client *ssh.Client, host, user, keyPath string) {
 		})
 		d := time.Since(start)
 		if allOK(rs) {
-			pass(22, "post-reboot: B+C container run", d)
+			pass(23, "post-reboot: B+C container run", d)
 		} else {
-			fail(22, "post-reboot: B+C container run", failMsgs(rs), d)
+			fail(23, "post-reboot: B+C container run", failMsgs(rs), d)
 		}
 	}
 
-	// 23 — post-reboot: B+C outbound networking (concurrent)
+	// 24 — post-reboot: B+C outbound networking (concurrent)
 	{
 		start := time.Now()
 		rs = forAll(client, surviving, func(c *ssh.Client, inst Instance) (bool, string) {
@@ -742,13 +771,13 @@ func runTests(client *ssh.Client, host, user, keyPath string) {
 		})
 		d := time.Since(start)
 		if allOK(rs) {
-			pass(23, "post-reboot: B+C outbound networking", d)
+			pass(24, "post-reboot: B+C outbound networking", d)
 		} else {
-			fail(23, "post-reboot: B+C outbound networking", failMsgs(rs), d)
+			fail(24, "post-reboot: B+C outbound networking", failMsgs(rs), d)
 		}
 	}
 
-	// 24 — post-reboot: B+C DinD full (start + inner container + inner ping, concurrent)
+	// 25 — post-reboot: B+C DinD full (start + inner container + inner ping, concurrent)
 	{
 		start := time.Now()
 		rs = forAll(client, surviving, func(c *ssh.Client, inst Instance) (bool, string) {
@@ -793,21 +822,21 @@ func runTests(client *ssh.Client, host, user, keyPath string) {
 		})
 		d := time.Since(start)
 		if allOK(rs) {
-			pass(24, "post-reboot: B+C DinD (start + inner container + inner networking)", d)
+			pass(25, "post-reboot: B+C DinD (start + inner container + inner networking)", d)
 		} else {
-			fail(24, "post-reboot: B+C DinD", failMsgs(rs), d)
+			fail(25, "post-reboot: B+C DinD", failMsgs(rs), d)
 		}
 	}
 
 	//
-	// ── Phase 11: Destroy remaining instances ─────────────────────────────────
+	// ── Phase 12: Destroy remaining instances ─────────────────────────────────
 	//
 
-	// 25-26 — destroy B and C sequentially (avoid systemd race)
+	// 26-27 — destroy B and C sequentially (avoid systemd race)
 	for i, inst := range surviving {
-		num := 25 + i
+		num := 26 + i
 		start := time.Now()
-		_, se, code := run(client, fmt.Sprintf("DOCKYARD_ENV=%s sudo -E ~/dockyard.sh destroy --yes", inst.EnvFile))
+		_, se, code := run(client, fmt.Sprintf("sudo env DOCKYARD_ENV=%s ~/dockyard.sh destroy --yes", inst.EnvFile))
 		d := time.Since(start)
 		if code != 0 {
 			fail(num, fmt.Sprintf("destroy %s", inst.Label), se, d)
@@ -816,7 +845,7 @@ func runTests(client *ssh.Client, host, user, keyPath string) {
 		}
 	}
 
-	// 27 — full cleanup: no services, bridges, iptables rules, data dirs, users
+	// 28 — full cleanup: no services, bridges, iptables rules, data dirs, users
 	{
 		start := time.Now()
 		var cleanFails []string
@@ -861,17 +890,17 @@ func runTests(client *ssh.Client, host, user, keyPath string) {
 		}
 		d := time.Since(start)
 		if len(cleanFails) == 0 {
-			pass(27, "full cleanup: no services, bridges, iptables, data dirs, or users", d)
+			pass(28, "full cleanup: no services, bridges, iptables, data dirs, or users", d)
 		} else {
-			fail(27, "full cleanup", strings.Join(cleanFails, " | "), d)
+			fail(28, "full cleanup", strings.Join(cleanFails, " | "), d)
 		}
 	}
 
 	//
-	// ── Phase 12: Nested DOCKYARD_ROOT lifecycle ──────────────────────────────
+	// ── Phase 13: Nested DOCKYARD_ROOT lifecycle ──────────────────────────────
 	//
 
-	// 28 — deeply nested DOCKYARD_ROOT: gen-env → create → container run → destroy
+	// 29 — deeply nested DOCKYARD_ROOT: gen-env → create → container run → destroy
 	// Verifies the FHS layout works when DOCKYARD_ROOT is several levels deep.
 	{
 		start := time.Now()
@@ -881,7 +910,7 @@ func runTests(client *ssh.Client, host, user, keyPath string) {
 		nestedSocket := nestedRoot + "/run/docker.sock"
 
 		// Pre-cleanup in case a previous run left state
-		run(client, fmt.Sprintf("DOCKYARD_ENV=%s sudo -E ~/dockyard.sh destroy --yes 2>/dev/null; true", nestedEnv))
+		run(client, fmt.Sprintf("sudo env DOCKYARD_ENV=%s ~/dockyard.sh destroy --yes 2>/dev/null; true", nestedEnv))
 		run(client, fmt.Sprintf("sudo rm -rf /var/tmp/dockyard-nested 2>/dev/null; true"))
 		run(client, "rm -rf ~/dockyard-nested-test 2>/dev/null; true")
 		run(client, fmt.Sprintf("sudo systemctl stop %sdocker 2>/dev/null; sudo systemctl disable %sdocker 2>/dev/null; true", nestedPrefix, nestedPrefix))
@@ -901,7 +930,7 @@ func runTests(client *ssh.Client, host, user, keyPath string) {
 		}
 
 		if nestedOK {
-			_, se, code = run(client, fmt.Sprintf("DOCKYARD_ENV=%s sudo -E ~/dockyard.sh create", nestedEnv))
+			_, se, code = run(client, fmt.Sprintf("sudo env DOCKYARD_ENV=%s ~/dockyard.sh create", nestedEnv))
 			if code != 0 {
 				nestedOK, nestedMsg = false, "create: "+se
 			}
@@ -918,7 +947,7 @@ func runTests(client *ssh.Client, host, user, keyPath string) {
 		}
 
 		if nestedOK {
-			_, se, code = run(client, fmt.Sprintf("DOCKYARD_ENV=%s sudo -E ~/dockyard.sh destroy --yes", nestedEnv))
+			_, se, code = run(client, fmt.Sprintf("sudo env DOCKYARD_ENV=%s ~/dockyard.sh destroy --yes", nestedEnv))
 			if code != 0 {
 				nestedOK, nestedMsg = false, "destroy: "+se
 			} else {
@@ -930,15 +959,15 @@ func runTests(client *ssh.Client, host, user, keyPath string) {
 		}
 
 		// Always clean up, even on failure
-		run(client, fmt.Sprintf("DOCKYARD_ENV=%s sudo -E ~/dockyard.sh destroy --yes 2>/dev/null; true", nestedEnv))
+		run(client, fmt.Sprintf("sudo env DOCKYARD_ENV=%s ~/dockyard.sh destroy --yes 2>/dev/null; true", nestedEnv))
 		run(client, "sudo rm -rf /var/tmp/dockyard-nested 2>/dev/null; true")
 		run(client, "rm -rf ~/dockyard-nested-test 2>/dev/null; true")
 
 		d := time.Since(start)
 		if nestedOK {
-			pass(28, "nested DOCKYARD_ROOT lifecycle (gen-env + create + container run + destroy)", d)
+			pass(29, "nested DOCKYARD_ROOT lifecycle (gen-env + create + container run + destroy)", d)
 		} else {
-			fail(28, "nested DOCKYARD_ROOT lifecycle", nestedMsg, d)
+			fail(29, "nested DOCKYARD_ROOT lifecycle", nestedMsg, d)
 		}
 	}
 }
@@ -1022,7 +1051,7 @@ func main() {
 	runTests(client, *hostFlag, *userFlag, kp)
 	totalElapsed := time.Since(suiteStart)
 
-	total := 28 // total expected tests
+	total := 29 // total expected tests
 	passed := 0
 	for _, r := range results {
 		if r.Passed {
