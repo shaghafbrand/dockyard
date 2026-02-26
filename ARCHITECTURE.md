@@ -212,7 +212,9 @@ User/group creation happens during `create`, removal during `destroy`. Both oper
 
 ### 8. Single script, subcommand interface
 
-`dockyard.sh` is the sole artifact you need to deploy. There are no config management tools, no Helm charts, no daemon processes beyond what it installs. The build pipeline (`./build.sh`) concatenates 14 source files in `src/` into `dist/dockyard.sh` but the output is a plain shell script that runs on any Linux system with bash, curl, tar, and systemd.
+`dockyard.sh` is the sole artifact you need to deploy. There are no config management tools, no Helm charts, no daemon processes beyond what it installs. The build pipeline (`./build.sh`) concatenates 15 source files in `src/` into `dist/dockyard.sh` but the output is a plain shell script that runs on any Linux system with bash, curl, tar, and systemd.
+
+Subcommands: `gen-env`, `create`, `enable`, `disable`, `start`, `stop`, `status`, `verify`, `destroy`. The `verify` subcommand runs a post-install smoke test (service health, socket, API, container run, outbound networking, Docker-in-Docker) and exits 0 only if all six checks pass.
 
 This matters for target environments: cloud VMs, CI nodes, and edge hosts rarely have package managers pre-seeded with the right tools, but they always have bash. The only external tools required are `curl` and `tar` — `dpkg-deb` is no longer needed since sysbox is distributed as a static tarball.
 

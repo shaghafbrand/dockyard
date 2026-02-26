@@ -34,6 +34,7 @@ The fork (`github.com/thieso2/sysbox`, version `0.6.7.9-tc`) adds `--run-dir <di
 
 **Date**: 2026-02-24
 **Severity**: Integration blocker for per-instance sysbox-runc
+**Status**: RESOLVED in 0.6.7.9-tc — `runtimeArgs` now works; wrapper script no longer needed
 
 `sysbox-runc` does not accept `--run-dir` as a CLI flag. Passing it via `runtimeArgs` in daemon.json causes exit status 1 at container start time.
 
@@ -55,6 +56,7 @@ daemon.json's `runtimes` block points to the wrapper with no `runtimeArgs`.
 
 **Date**: 2026-02-24
 **Severity**: Build correctness bug — wrapper script shebangs silently removed
+**Status**: RESOLVED — replaced with `awk 'NR==1 && /^#!/ {next} {print}'`
 
 `build.sh` used `grep -v '^#!'` to strip the per-file shebang line before concatenating source files. This also stripped any `#!/bin/sh` line that appeared inside a heredoc in a source file (specifically the sysbox-runc wrapper script heredoc in `src/11_create.sh`).
 
