@@ -41,6 +41,11 @@ case "$COMMAND" in
         derive_vars
         cmd_status
         ;;
+    verify)
+        load_env
+        derive_vars
+        cmd_verify
+        ;;
     destroy)
         load_env
         derive_vars

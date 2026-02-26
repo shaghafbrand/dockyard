@@ -12,6 +12,7 @@ Commands:
   start       Start daemons manually (without systemd)
   stop        Stop manually started daemons
   status      Show instance status
+  verify      Smoke-test a running instance (service, containers, DinD, networking)
   destroy     Stop and remove everything
 
 All commands except gen-env require a config file:
@@ -27,6 +28,7 @@ Examples:
   sudo ./dockyard.sh start
   sudo ./dockyard.sh stop
   ./dockyard.sh status
+  sudo ./dockyard.sh verify
   sudo ./dockyard.sh destroy
 
   # Multiple instances
