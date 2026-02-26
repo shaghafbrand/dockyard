@@ -534,7 +534,7 @@ cmd_create() {
     # on a shared extraction directory (all instances share the same CACHE_DIR).
     local STAGING="${CACHE_DIR}/staging-$$"
     mkdir -p "$STAGING"
-    trap 'rm -rf "$STAGING"' RETURN EXIT INT TERM
+    trap 'rm -rf "$STAGING"' RETURN INT TERM
 
     echo "Extracting Docker binaries..."
     tar -xzf "${CACHE_DIR}/docker-${DOCKER_VERSION}.tgz" -C "$STAGING"
