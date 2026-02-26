@@ -331,3 +331,39 @@ A structured review identified 8 bugs across the service lifecycle. All fixed in
 ### 8. `verify` DinD output check used exact match (Medium)
 
 See separate entry above. Same root cause: docker pull output mixed into stdout.
+
+---
+
+## staging trap EXIT fires after cmd_create returns — unbound variable
+
+**Date**: 2026-02-26
+**Severity**: Create fails on every run (regression from reliability audit fix #6)
+**Status**: RESOLVED — commit `089c3c8`
+
+### Symptom
+
+`dockyard.sh create` exited immediately after enabling the systemd service with:
+
+```
+/home/thies/dockyard.sh: line 1: STAGING: unbound variable
+```
+
+### Root cause
+
+The reliability audit added `EXIT` to the staging-directory cleanup trap:
+
+```bash
+trap 'rm -rf "$STAGING"' RETURN EXIT INT TERM
+```
+
+`trap ... EXIT` sets the **script-level** EXIT handler, not a function-level one. It fires when the entire script process exits — which happens *after* `cmd_create` has already returned and its `local STAGING` variable has gone out of scope. With `set -u`, referencing an unbound variable is a fatal error, so the script died at script exit rather than after `create` completed.
+
+`RETURN` already fires when the function returns normally (the original intent). `INT` and `TERM` fire while still inside the function, where `STAGING` is in scope.
+
+### Fix
+
+Drop `EXIT` from the trap; keep `RETURN INT TERM`:
+
+```bash
+trap 'rm -rf "$STAGING"' RETURN INT TERM
+```
