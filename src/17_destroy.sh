@@ -57,11 +57,14 @@ cmd_destroy() {
     local apparmor_file="/etc/apparmor.d/local/fusermount3"
     local apparmor_begin="# dockyard:${DOCKYARD_DOCKER_PREFIX}:begin"
     if grep -qF "$apparmor_begin" "$apparmor_file" 2>/dev/null; then
-        awk -v start="$apparmor_begin" \
-            -v stop="# dockyard:${DOCKYARD_DOCKER_PREFIX}:end" \
-            '$0 == start { skip=1 } skip { if ($0 == stop) { skip=0 }; next } { print }' \
-            "$apparmor_file" > "${apparmor_file}.tmp" \
-            && mv "${apparmor_file}.tmp" "$apparmor_file"
+        {
+            flock -x 9
+            awk -v start="$apparmor_begin" \
+                -v stop="# dockyard:${DOCKYARD_DOCKER_PREFIX}:end" \
+                '$0 == start { skip=1 } skip { if ($0 == stop) { skip=0 }; next } { print }' \
+                "$apparmor_file" > "${apparmor_file}.tmp" \
+                && mv "${apparmor_file}.tmp" "$apparmor_file"
+        } 9>"${apparmor_file}.lock"
         if [ -f /etc/apparmor.d/fusermount3 ]; then
             apparmor_parser -r /etc/apparmor.d/fusermount3 2>/dev/null || true
         fi

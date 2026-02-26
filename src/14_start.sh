@@ -7,6 +7,7 @@ cmd_start() {
 
     # Clean up stale sockets/pids from previous runs
     rm -f "$CONTAINERD_SOCKET" "$DOCKER_SOCKET"
+    rm -f "${SYSBOX_RUN_DIR}/sysmgr.sock" "${SYSBOX_RUN_DIR}/sysfs.sock" "${SYSBOX_RUN_DIR}/sysfs-seccomp.sock"
     for pidfile in "${RUN_DIR}/containerd.pid" "${RUN_DIR}/dockerd.pid"; do
         if [ -f "$pidfile" ]; then
             local pid
@@ -40,6 +41,7 @@ cmd_start() {
     echo "$SYSBOX_MGR_PID" > "${SYSBOX_RUN_DIR}/sysbox-mgr.pid"
     STARTED_PIDS+=("$SYSBOX_MGR_PID")
     wait_for_file "${SYSBOX_RUN_DIR}/sysmgr.sock" "sysbox-mgr" 30 || cleanup
+    kill -0 "$SYSBOX_MGR_PID" 2>/dev/null || { echo "sysbox-mgr exited unexpectedly" >&2; cleanup; }
     echo "  sysbox-mgr ready (pid ${SYSBOX_MGR_PID})"
 
     echo "Starting sysbox-fs..."
@@ -49,6 +51,7 @@ cmd_start() {
     echo "$SYSBOX_FS_PID" > "${SYSBOX_RUN_DIR}/sysbox-fs.pid"
     STARTED_PIDS+=("$SYSBOX_FS_PID")
     wait_for_file "${SYSBOX_RUN_DIR}/sysfs.sock" "sysbox-fs" 30 || cleanup
+    kill -0 "$SYSBOX_FS_PID" 2>/dev/null || { echo "sysbox-fs exited unexpectedly" >&2; cleanup; }
     echo "  sysbox-fs ready (pid ${SYSBOX_FS_PID})"
 
     # --- 2. Create bridge ---

@@ -100,17 +100,20 @@ cmd_create() {
         local apparmor_file="/etc/apparmor.d/local/fusermount3"
         local apparmor_begin="# dockyard:${DOCKYARD_DOCKER_PREFIX}:begin"
         local apparmor_end="# dockyard:${DOCKYARD_DOCKER_PREFIX}:end"
-        if ! grep -qF "$apparmor_begin" "$apparmor_file" 2>/dev/null; then
-            {
-                echo "$apparmor_begin"
-                # Ubuntu 25.10+ comments out dac_override in the base fusermount3
-                # profile (LP: #2122161). sysbox-fs needs it for FUSE mounts.
-                echo "capability dac_override,"
-                echo "mount fstype=fuse options=(nosuid,nodev) options in (ro,rw) -> ${SYSBOX_DATA_DIR}/**/,"
-                echo "umount ${SYSBOX_DATA_DIR}/**/,"
-                echo "$apparmor_end"
-            } >> "$apparmor_file"
-        fi
+        {
+            flock -x 9
+            if ! grep -qF "$apparmor_begin" "$apparmor_file" 2>/dev/null; then
+                {
+                    echo "$apparmor_begin"
+                    # Ubuntu 25.10+ comments out dac_override in the base fusermount3
+                    # profile (LP: #2122161). sysbox-fs needs it for FUSE mounts.
+                    echo "capability dac_override,"
+                    echo "mount fstype=fuse options=(nosuid,nodev) options in (ro,rw) -> ${SYSBOX_DATA_DIR}/**/,"
+                    echo "umount ${SYSBOX_DATA_DIR}/**/,"
+                    echo "$apparmor_end"
+                } >> "$apparmor_file"
+            fi
+        } 9>"${apparmor_file}.lock"
         if [ -f /etc/apparmor.d/fusermount3 ]; then
             apparmor_parser -r /etc/apparmor.d/fusermount3
             echo "  AppArmor fusermount3 profile updated for ${SYSBOX_DATA_DIR}"
@@ -124,7 +127,7 @@ cmd_create() {
             echo "  cached: $(basename "$dest")"
         else
             echo "  downloading: $(basename "$url")"
-            curl -fsSL -o "$dest" "$url"
+            curl -fsSL -o "${dest}.tmp" "$url" && mv "${dest}.tmp" "$dest"
         fi
     }
 
@@ -137,7 +140,7 @@ cmd_create() {
     # on a shared extraction directory (all instances share the same CACHE_DIR).
     local STAGING="${CACHE_DIR}/staging-$$"
     mkdir -p "$STAGING"
-    trap 'rm -rf "$STAGING"' RETURN
+    trap 'rm -rf "$STAGING"' RETURN EXIT INT TERM
 
     echo "Extracting Docker binaries..."
     tar -xzf "${CACHE_DIR}/docker-${DOCKER_VERSION}.tgz" -C "$STAGING"

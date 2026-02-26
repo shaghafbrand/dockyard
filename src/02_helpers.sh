@@ -78,7 +78,7 @@ wait_for_file() {
     local label="$2"
     local timeout="${3:-30}"
     local i=0
-    while [ ! -e "$file" ]; do
+    while [ ! -S "$file" ]; do
         sleep 1
         i=$((i + 1))
         if [ "$i" -ge "$timeout" ]; then
