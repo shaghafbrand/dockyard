@@ -201,7 +201,7 @@ The fork (`github.com/thieso2/sysbox`, version `0.6.7.9-tc`) adds `--run-dir <di
 
 ## Prerequisites
 
-- **Linux kernel ≤ 6.14** — Ubuntu 24.04 LTS (kernel 6.8) and Ubuntu 25.04 (kernel 6.14) are confirmed working. Ubuntu 25.10 (kernel 6.17) is **not compatible**: sysbox 0.6.7 calls `mount --make-private /` inside a new user namespace, which the kernel refuses with `EPERM` on 6.17+. See [FINDINGS.md](FINDINGS.md) for details.
+- **Linux kernel ≤ 6.16** — Kernels 6.8 (Ubuntu 24.04 LTS), 6.14 (Ubuntu 25.04), and 6.16 (mainline) are confirmed working. Ubuntu 25.10 (kernel 6.17) is **not compatible**: sysbox 0.6.7 calls `mount --make-private /` inside a new user namespace, which the kernel refuses with `EPERM` on 6.17+. See [FINDINGS.md](FINDINGS.md) for details.
 - Linux with systemd
 - x86_64 architecture (arm64 not yet supported)
 - `curl` and `tar` for binary downloads

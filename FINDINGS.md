@@ -233,6 +233,7 @@ This restriction was tightened in the upstream kernel. Mainline `runc` ≥ 1.2 h
 | Distro | Kernel | Status |
 |--------|--------|--------|
 | Ubuntu 25.10 | 6.17 | ❌ broken |
+| mainline | 6.16 | ✅ confirmed working |
 | Ubuntu 25.04 | 6.14 | ✅ confirmed working |
 | Ubuntu 24.04 LTS | 6.8 | ✅ confirmed working |
 | Ubuntu 22.04 LTS | 5.15 | ✅ expected working |
