@@ -66,7 +66,7 @@ cmd_verify() {
         done
         if $ready; then
             out=$(DOCKER_HOST="$_s" "$_d" exec "$cname" docker run --rm alpine echo dind-ok 2>&1)
-            if [ "$out" = "dind-ok" ]; then
+            if echo "$out" | grep -q "dind-ok"; then
                 _pass "Docker-in-Docker (inner container via sysbox)"
             else
                 _fail "DinD inner container" "$out"
