@@ -1,6 +1,6 @@
 # Progress
 
-## Current Status: All 28 tests passing
+## Current Status: All 29 tests passing
 
 ## Architecture: Per-Instance Sysbox (0.6.7.9-tc fork)
 
@@ -64,6 +64,7 @@ src/14_start.sh      start command (inline sysbox start + --group flag)
 src/15_stop.sh       stop command (inline sysbox stop)
 src/16_status.sh     status command
 src/17_destroy.sh    destroy command (sysbox dirs + userdel/groupdel)
+src/18_verify.sh     verify command (smoke-test: service, socket, API, container, ping, DinD)
 src/90_usage.sh      usage text
 src/99_dispatch.sh   command dispatch
 ```
@@ -76,7 +77,7 @@ inside heredocs.
 
 ### Test Suite (cmd/dockyardtest/main.go)
 
-28 tests across 3 instances (A=dy1_, B=dy2_, C=dy3_) plus 1 nested-root test. Per-test timing shown in
+29 tests across 3 instances (A=dy1_, B=dy2_, C=dy3_) plus 1 nested-root test. Per-test timing shown in
 output; total elapsed printed in summary.
 
 | Phase | Tests | Description |
@@ -88,25 +89,24 @@ output; total elapsed printed in summary.
 | Networking | 08–09 | Outbound ping + DNS resolution |
 | DinD | 10–12 | Start DinD (no --privileged), inner container, inner networking |
 | Isolation | 13 | Daemon-level: A's containers not in B's docker ps |
-| Stop/start cycle | 14 | systemctl stop/start instance A; verify containers still run |
-| Socket permissions | 15 | Socket mode last octet = 0; group = `${PREFIX}docker` |
-| Destroy under load | 16 | Running container present at destroy time; must succeed |
-| Double destroy | 17 | Second destroy must exit 0 (idempotent) |
-| Cleanup check | 18 | A's service, bridge, and iptables rules all gone |
-| Survivor check | 19 | B+C unaffected by A's destruction |
-| Reboot | 20 | Full host reboot; B+C come back automatically via systemd |
-| Post-reboot health | 21–24 | Services, containers, networking, DinD on B+C |
-| Final teardown | 25–26 | Destroy B and C |
-| Full cleanup | 27 | No residual services, bridges, iptables, data dirs, users/groups |
-| Nested root | 28 | DOCKYARD_ROOT at a deeply nested path — full lifecycle |
+| Verify | 14 | `dockyard.sh verify` on all instances — 6/6 checks pass |
+| Edge cases | 15–16 | Stop/start cycle; socket permissions |
+| Destroy A | 17–19 | Under load, double destroy, cleanup check |
+| Survivor check | 20 | B+C unaffected by A's destruction |
+| Reboot | 21 | Full host reboot; B+C come back automatically via systemd |
+| Post-reboot health | 22–25 | Services, containers, networking, DinD on B+C |
+| Final teardown | 26–27 | Destroy B and C |
+| Full cleanup | 28 | No residual services, bridges, iptables, data dirs, users/groups |
+| Nested root | 29 | DOCKYARD_ROOT at a deeply nested path — full lifecycle |
 
-Tests 05, 07–13, 19–24 run instance-level checks concurrently using goroutines.
+Tests 05, 07–14, 20–25 run instance-level checks concurrently using goroutines.
 Results are sorted by instance label before printing.
 
 ## Completed
 
-- [x] All 28 tests pass on target VM (100.106.185.92)
-- [x] 28/28 tests pass on mainline kernel 6.18.0-061800-generic (Ubuntu 25.04, incus VM on sandman)
+- [x] All 29 tests pass on target VM (100.106.185.92)
+- [x] 29/29 tests pass on mainline kernel 6.18.0-061800-generic (Ubuntu 25.04, incus VM on sandman)
+- [x] verify subcommand (6-check post-install smoke test: service, socket, API, container, ping, DinD)
 - [x] Per-test timing output
 - [x] Per-instance sysbox via 0.6.7.9-tc fork
 - [x] sysbox-runc --run-dir via runtimeArgs (no wrapper script)
@@ -114,7 +114,7 @@ Results are sorted by instance label before printing.
 - [x] Per-instance user/group (`${PREFIX}docker`)
 - [x] Socket group ownership verified in test suite
 - [x] FHS-aligned directory layout (bin/, etc/, lib/, log/, run/ under DOCKYARD_ROOT)
-- [x] Nested DOCKYARD_ROOT path test (test 28)
+- [x] Nested DOCKYARD_ROOT path test (test 29)
 
 ## Pending
 

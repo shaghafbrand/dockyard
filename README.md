@@ -112,6 +112,7 @@ sudo ./dockyard.sh disable                                    # Remove systemd s
 sudo ./dockyard.sh start                                      # Start manually (no systemd)
 sudo ./dockyard.sh stop                                       # Stop manually (no systemd)
 ./dockyard.sh status                                          # Show diagnostics
+sudo ./dockyard.sh verify                                     # Smoke-test a running instance
 sudo ./dockyard.sh destroy                                    # Remove instance completely
 ```
 

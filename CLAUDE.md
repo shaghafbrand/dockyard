@@ -193,6 +193,7 @@ ${DOCKYARD_ROOT}/                        # owned by ${INSTANCE_USER}:${INSTANCE_
 - `src/14_start.sh` — starts sysbox-mgr and sysbox-fs inline before containerd/dockerd, `--group` flag
 - `src/15_stop.sh` — stops dockerd, containerd, sysbox-fs, sysbox-mgr in order
 - `src/17_destroy.sh` — `rm -rf DOCKYARD_ROOT`, userdel/groupdel
+- `src/18_verify.sh` — post-install smoke test (service, socket, API, container run, ping, DinD)
 - `ARCHITECTURE.md` — comprehensive design doc with mermaid diagrams
 - `FINDINGS.md` — root cause analysis of all discovered issues
 - `PROGRESS.md` — architecture summary and test phase breakdown
