@@ -257,3 +257,77 @@ Two options:
 **Date**: 2026-02-23
 
 The cleanup test checked `ip link show dy2_docker0` and parsed the output for "does not exist" string. When the bridge is gone, the command exits non-zero AND prints "Device ... does not exist." — the logic was correct, but the bridge may have been left by the pool cleanup bug. Resolved by fixing the underlying destroy and using exit-code-based checks.
+
+---
+
+## verify: DinD check false-positive when alpine image not cached
+
+**Date**: 2026-02-26
+**Severity**: Test false-positive — `verify` reported FAIL on working DinD
+**Status**: RESOLVED — `src/18_verify.sh`
+
+`cmd_verify` ran `docker exec $cname docker run --rm alpine echo dind-ok` and checked the output with:
+
+```bash
+if [ "$out" = "dind-ok" ]; then
+```
+
+When the alpine image was not cached inside the DinD container, docker pull progress lines appeared in stdout alongside `dind-ok`. The exact-string match failed even though the inner container worked correctly.
+
+**Fix**: Replace `[ "$out" = "dind-ok" ]` with `echo "$out" | grep -q "dind-ok"`.
+
+---
+
+## Reliability audit: 8 issues found and fixed
+
+**Date**: 2026-02-26
+**Severity**: Mix of critical, high, and medium
+**Status**: RESOLVED — commit `2c87943`
+
+A structured review identified 8 bugs across the service lifecycle. All fixed in a single commit; all 29 dockyardtest tests pass after.
+
+### 1. Stale sysbox sockets fool the wait loop (Critical)
+
+**Symptom**: After an unclean shutdown, `sysmgr.sock` / `sysfs.sock` / `sysfs-seccomp.sock` persist on disk. The socket wait loop checked `[ ! -e file ]` (any file type), so the stale socket immediately satisfied the check. The service appeared to start but the first `docker run` failed with a gRPC connection error to sysbox.
+
+**Fix** (`src/12_enable.sh`, `src/14_start.sh`): Added `ExecStartPre` that removes the three sysbox socket files before starting sysbox-mgr and sysbox-fs. Also applied in `cmd_start`.
+
+### 2. Socket wait loop used `-e` instead of `-S` (Critical)
+
+**Symptom**: `wait_for_file` and all inline wait loops in the service file used `[ ! -e "$file" ]` — satisfied by any file at the path, not just a Unix domain socket. A directory, regular file, or broken symlink at the socket path would satisfy the check.
+
+**Fix** (`src/02_helpers.sh`, `src/12_enable.sh`): Changed all wait conditions to `[ ! -S "$file" ]` (socket type check).
+
+### 3. No alive check in socket wait loops (High)
+
+**Symptom**: If a daemon crashed after creating its socket but before finishing initialization, the wait loop returned immediately (socket file exists). If a daemon crashed before creating the socket, the loop waited the full 30 s timeout. Neither case detected the crash promptly.
+
+**Fix** (`src/12_enable.sh`, `src/14_start.sh`): Added `kill -0 $PID` inside every wait loop — if the process is no longer alive the loop exits with an error immediately, avoiding both the silent-success and the long-timeout failure modes.
+
+### 4. iptables duplicate rules on service restart (Critical)
+
+**Symptom**: The service file used bare `iptables -I` without checking whether a rule already existed. On `Restart=on-failure`, rules were inserted a second time at the head of the FORWARD chain, producing duplicates. `ExecStopPost` uses `-D` to remove rules, but if cleanup was incomplete (e.g., a partially failed start), the restart inserted additional copies.
+
+**Fix** (`src/12_enable.sh`): Replaced every `iptables -I` in `ExecStartPre` with the idempotent `iptables -C ... 2>/dev/null || iptables -I ...` pattern already used in `cmd_start`.
+
+### 5. Concurrent create: download() TOCTOU / partial-tarball corruption (High)
+
+**Symptom**: Two concurrent `create` invocations both passed the `[ -f "$dest" ]` check (false) and started `curl -o "$dest" "$url"` simultaneously, each writing to the same destination file. One curl's partial write could be read by the other instance's `tar` extraction, producing a corrupted tarball.
+
+**Fix** (`src/11_create.sh`): Changed `curl -o "$dest"` to `curl -o "${dest}.tmp" && mv "${dest}.tmp" "$dest"`. The `mv` (rename syscall) is atomic; the worst case is two complete downloads where the second overwrites the first with an identical file.
+
+### 6. Staging directory leaked on Ctrl-C (Medium)
+
+**Symptom**: `cmd_create` used `trap 'rm -rf "$STAGING"' RETURN` to clean up the per-PID staging directory. RETURN fires when the function returns normally, but not on SIGINT or SIGTERM. A Ctrl-C during download/extraction left an orphaned `staging-$$` directory under `.tmp/`.
+
+**Fix** (`src/11_create.sh`): Extended to `trap 'rm -rf "$STAGING"' RETURN EXIT INT TERM`.
+
+### 7. Concurrent AppArmor write/remove TOCTOU (Medium)
+
+**Symptom**: `cmd_create` appended to `/etc/apparmor.d/local/fusermount3` after a `grep` check — two concurrent creates for different instances could both pass the check and both append, resulting in duplicate blocks. `cmd_destroy` used `awk > .tmp && mv` without any locking — two concurrent destroys could each read the same file, each write their own `.tmp`, and the second `mv` would silently discard the first's removal.
+
+**Fix** (`src/11_create.sh`, `src/17_destroy.sh`): Wrapped both operations in `flock -x 9` on a `.lock` file alongside the AppArmor file. The check-then-write and the awk-then-rename are now serialized.
+
+### 8. `verify` DinD output check used exact match (Medium)
+
+See separate entry above. Same root cause: docker pull output mixed into stdout.
